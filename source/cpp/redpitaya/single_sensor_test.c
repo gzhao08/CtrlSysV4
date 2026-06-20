@@ -160,6 +160,23 @@ static int icm_read_register(volatile uint32_t *spi, uint8_t address,
     return 0;
 }
 
+static int print_raw_identity_transaction(volatile uint32_t *spi,
+                                          const char *mode_name)
+{
+    const uint8_t tx[4] = {ICM_WHO_AM_I | 0x80u, 0u, 0u, 0u};
+    uint8_t rx[4];
+    unsigned i;
+
+    if (axi_spi_transfer(spi, tx, rx, sizeof(tx)) != 0)
+        return -1;
+
+    printf("WHO_AM_I %s raw RX:", mode_name);
+    for (i = 0; i < sizeof(rx); ++i)
+        printf(" 0x%02x", rx[i]);
+    printf("\n");
+    return 0;
+}
+
 static int initialize_icm20948(volatile uint32_t *core,
                                volatile uint32_t *spi)
 {
@@ -175,6 +192,8 @@ static int initialize_icm20948(volatile uint32_t *core,
     axi_spi_mode_bits = 0;
     if (icm_write_register(spi, ICM_USER_BANK_SEL, 0x00u) != 0)
         goto transaction_failure;
+    if (print_raw_identity_transaction(spi, "mode 0") != 0)
+        goto transaction_failure;
     printf("WHO_AM_I mode 0:");
     for (i = 0; i < 4; ++i) {
         if (icm_read_register(spi, ICM_WHO_AM_I, &mode0_identity[i]) != 0)
@@ -185,6 +204,8 @@ static int initialize_icm20948(volatile uint32_t *core,
 
     axi_spi_mode_bits = SPI_CR_CPOL | SPI_CR_CPHA;
     if (icm_write_register(spi, ICM_USER_BANK_SEL, 0x00u) != 0)
+        goto transaction_failure;
+    if (print_raw_identity_transaction(spi, "mode 3") != 0)
         goto transaction_failure;
     printf("WHO_AM_I mode 3:");
     for (i = 0; i < 4; ++i) {
