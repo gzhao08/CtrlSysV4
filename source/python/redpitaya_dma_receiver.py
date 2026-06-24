@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import socket
 import struct
@@ -77,6 +78,30 @@ def sensor_bytes_from_frame(frame: tuple[int, ...]) -> bytes:
     return bytes(values)
 
 
+def open_csv_writer(path: str | None) -> tuple[object | None, csv.writer | None]:
+    if path is None:
+        return None, None
+
+    csv_file = open(path, "w", newline="", encoding="utf-8")
+    writer = csv.writer(csv_file)
+    writer.writerow([
+        "sequence",
+        "irq_count",
+        "core_count",
+        "arrival_iso",
+        "arrival_epoch_ns",
+        "pc_elapsed_ms",
+        "pc_inter_arrival_ms",
+        "fpga_start_ticks",
+        "fpga_done_ticks",
+        "fpga_inter_arrival_ticks",
+        "fpga_inter_arrival_ms",
+        "read_us",
+        "sensor_hex",
+    ])
+    return csv_file, writer
+
+
 def plot_records(records: list[SampleRecord]) -> None:
     if not records:
         print("no records to plot")
@@ -138,13 +163,19 @@ def main() -> int:
                         help="plot packet arrival times after capture ends")
     parser.add_argument("--quiet", action="store_true",
                         help="record samples without printing each packet")
+    parser.add_argument("--csv", metavar="PATH",
+                        help="write received samples to a CSV file")
+    parser.add_argument("--flush-every", type=int, default=1000,
+                        help="flush the CSV file every N rows; 0 flushes only at the end")
     args = parser.parse_args()
 
     packet_size = PACKET_STRUCT.size
     first_perf_ns: int | None = None
     previous_perf_ns: int | None = None
+    previous_start_ticks: int | None = None
     records: list[SampleRecord] = []
     received = 0
+    csv_file, csv_writer = open_csv_writer(args.csv)
 
     try:
         with socket.create_connection((args.host, args.port)) as sock:
@@ -178,17 +209,43 @@ def main() -> int:
 
                 start_ticks = (frame[1] << 32) | frame[0]
                 done_ticks = (frame[3] << 32) | frame[2]
+                fpga_delta_ticks = (
+                    0 if previous_start_ticks is None
+                    else start_ticks - previous_start_ticks
+                )
+                fpga_delta_ms = fpga_delta_ticks * 1_000 / SAMPLE_CLOCK_HZ
+                previous_start_ticks = start_ticks
                 read_us = (done_ticks - start_ticks) * 1_000_000 / SAMPLE_CLOCK_HZ
-                records.append(SampleRecord(
-                    sequence=sequence,
-                    irq_count=irq_count,
-                    core_count=core_count,
-                    arrival_epoch_ns=arrival_epoch_ns,
-                    arrival_perf_ns=arrival_perf_ns,
-                    fpga_start_ticks=start_ticks,
-                    fpga_done_ticks=done_ticks,
-                    read_us=read_us,
-                ))
+                if args.plot:
+                    records.append(SampleRecord(
+                        sequence=sequence,
+                        irq_count=irq_count,
+                        core_count=core_count,
+                        arrival_epoch_ns=arrival_epoch_ns,
+                        arrival_perf_ns=arrival_perf_ns,
+                        fpga_start_ticks=start_ticks,
+                        fpga_done_ticks=done_ticks,
+                        read_us=read_us,
+                    ))
+
+                if csv_writer is not None:
+                    csv_writer.writerow([
+                        sequence,
+                        irq_count,
+                        core_count,
+                        timestamp_text(arrival_epoch_ns),
+                        arrival_epoch_ns,
+                        f"{elapsed_ms:.6f}",
+                        f"{delta_ms:.6f}",
+                        start_ticks,
+                        done_ticks,
+                        fpga_delta_ticks,
+                        f"{fpga_delta_ms:.6f}",
+                        f"{read_us:.6f}",
+                        sensor_bytes_from_frame(frame).hex(" "),
+                    ])
+                    if args.flush_every > 0 and (received + 1) % args.flush_every == 0:
+                        csv_file.flush()
 
                 line = (
                     f"{timestamp_text(arrival_epoch_ns)} "
@@ -206,6 +263,9 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nstopped by user")
     finally:
+        if csv_file is not None:
+            csv_file.flush()
+            csv_file.close()
         if args.plot:
             plot_records(records)
 
