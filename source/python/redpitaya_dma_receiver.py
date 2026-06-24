@@ -95,23 +95,29 @@ def plot_records(records: list[SampleRecord]) -> None:
         / 1_000_000
         for index in range(len(records))
     ]
+    fpga_delta_ms = [
+        0.0 if index == 0 else
+        (records[index].fpga_start_ticks - records[index - 1].fpga_start_ticks)
+        * 1_000 / SAMPLE_CLOCK_HZ
+        for index in range(len(records))
+    ]
 
     fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(x, delta_ms, "o-", color="tab:orange")
+    ax.plot(x, delta_ms, "o-", color="tab:orange", label="PC inter-arrival")
     ax.set_xlabel("sample sequence")
     ax.set_ylabel("PC inter-arrival (ms)")
+    ax.tick_params(axis="y", labelcolor="tab:orange")
     ax.grid(True, alpha=0.3)
 
-    for record, y_value in zip(records, delta_ms):
-        ax.annotate(
-            str(record.fpga_start_ticks),
-            (record.sequence, y_value),
-            textcoords="offset points",
-            xytext=(0, 7),
-            ha="center",
-            fontsize=7,
-            rotation=35,
-        )
+    fpga_ax = ax.twinx()
+    fpga_ax.plot(x, fpga_delta_ms, "s--", color="tab:blue",
+                 label="FPGA start inter-arrival")
+    fpga_ax.set_ylabel("FPGA start inter-arrival (ms)")
+    fpga_ax.tick_params(axis="y", labelcolor="tab:blue")
+
+    lines = ax.get_lines() + fpga_ax.get_lines()
+    labels = [line.get_label() for line in lines]
+    ax.legend(lines, labels, loc="best")
 
     fig.suptitle("Red Pitaya DMA packet inter-arrival timing")
     fig.tight_layout()
