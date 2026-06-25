@@ -10,7 +10,7 @@ module SPI_reader #(
     parameter logic [6:0] REG_ADDR = 7'd45, // ICM accel_xout_h starts at address 45
     parameter integer DATA_BYTES = 20, // the number of data bytes to read per sensor
     parameter integer NUM_SENSORS = 1,
-    parameter integer SCLK_HALF_PERIOD_CYCLES = 25 // 1 MHz from a 50 MHz clk
+    parameter integer SCLK_HALF_PERIOD_CYCLES = 63 // Approximately 1 MHz from a 125 MHz clk
 )(
     input logic                         clk,
     input logic                         rst,
