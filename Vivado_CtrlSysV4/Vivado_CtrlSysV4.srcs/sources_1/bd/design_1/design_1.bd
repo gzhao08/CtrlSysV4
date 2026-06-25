@@ -1,7 +1,7 @@
 {
   "design": {
     "design_info": {
-      "boundary_crc": "0x144CC9E202DE770",
+      "boundary_crc": "0x144CC9E0C1F4EB3",
       "device": "xc7z020clg400-1",
       "gen_directory": "../../../../Vivado_CtrlSysV4.gen/sources_1/bd/design_1",
       "name": "design_1",
@@ -231,6 +231,9 @@
         "inst_hier_path": "ctrlsys_core_0",
         "has_run_ip_tcl": "true",
         "parameters": {
+          "BUFFER_SIZE": {
+            "value": "128"
+          },
           "NUM_SENSORS": {
             "value": "1"
           }
@@ -350,8 +353,14 @@
           "PCW_FPGA_FCLK1_ENABLE": {
             "value": "1"
           },
+          "PCW_IRQ_F2P_INTR": {
+            "value": "1"
+          },
           "PCW_UIPARAM_ACT_DDR_FREQ_MHZ": {
             "value": "533.333374"
+          },
+          "PCW_USE_FABRIC_INTERRUPT": {
+            "value": "1"
           },
           "PCW_USE_S_AXI_HP0": {
             "value": "1"
@@ -507,8 +516,14 @@
         "inst_hier_path": "axi_quad_spi_0",
         "has_run_ip_tcl": "true",
         "parameters": {
+          "C_SCK_RATIO": {
+            "value": "16"
+          },
           "C_USE_STARTUP": {
             "value": "0"
+          },
+          "Multiples16": {
+            "value": "8"
           }
         }
       },
@@ -1073,6 +1088,12 @@
       }
     },
     "nets": {
+      "axi_dma_0_s2mm_introut": {
+        "ports": [
+          "axi_dma_0/s2mm_introut",
+          "processing_system7_0/IRQ_F2P"
+        ]
+      },
       "ctrlsys_core_0_spi_cs_n": {
         "ports": [
           "ctrlsys_core_0/spi_cs_n",
@@ -1105,12 +1126,7 @@
           "axi_mem_intercon/M00_ACLK",
           "axi_mem_intercon/ACLK",
           "ctrlsys_core_0/clk",
-          "ctrlsys_core_0/s00_axi_aclk"
-        ]
-      },
-      "processing_system7_0_FCLK_CLK1": {
-        "ports": [
-          "processing_system7_0/FCLK_CLK1",
+          "ctrlsys_core_0/s00_axi_aclk",
           "axi_quad_spi_0/ext_spi_clk"
         ]
       },

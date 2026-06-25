@@ -6,7 +6,8 @@ set_property PACKAGE_PIN G18 [get_ports spi_mosi_0]
 set_property PACKAGE_PIN H16 [get_ports {spi_miso_0[0]}]
 set_property PACKAGE_PIN H17 [get_ports spi_cs_n_0]
 
-set_property IOSTANDARD LVCMOS33 [get_ports {spi_sclk_0 spi_mosi_0 spi_miso_0[0] spi_cs_n_0}]
+set_property IOSTANDARD LVCMOS33 [get_ports {spi_sclk_0 spi_mosi_0 spi_cs_n_0}]
+set_property IOSTANDARD LVCMOS33 [get_ports {spi_miso_0[0]}]
 
-set_property DRIVE 4 [get_ports {spi_sclk_0 spi_mosi_0 spi_cs_n_0}]
-set_property SLEW SLOW [get_ports {spi_sclk_0 spi_mosi_0 spi_cs_n_0}]
+set_property DRIVE 8 [get_ports {spi_sclk_0 spi_mosi_0 spi_cs_n_0}]
+set_property SLEW FAST [get_ports {spi_sclk_0 spi_mosi_0 spi_cs_n_0}]
