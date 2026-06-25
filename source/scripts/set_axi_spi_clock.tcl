@@ -13,24 +13,23 @@ if {[llength $core_ips] > 0} {
 }
 open_bd_design $bd_path
 
-# AXI Quad SPI only supports ratios through 16. Give its SPI engine a
-# dedicated 10 MHz fabric clock while leaving AXI-Lite at 50 MHz.
-set ps [get_bd_cells processing_system7_0]
+# The Red Pitaya loads this design as a PL-only bitstream, so the PS fabric
+# clocks retain their Linux runtime rates. FCLK_CLK0 measures 125 MHz on the
+# board; divide it by 16 * 8 for an approximately 976.6 kHz SPI clock.
 set_property -dict [list \
-    CONFIG.PCW_EN_CLK1_PORT {1} \
-    CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {10.000000}] $ps
-set_property CONFIG.C_SCK_RATIO 16 [get_bd_cells axi_quad_spi_0]
+    CONFIG.C_SCK_RATIO {16} \
+    CONFIG.Multiples16 {8}] [get_bd_cells axi_quad_spi_0]
 
 set ext_spi_clk [get_bd_pins axi_quad_spi_0/ext_spi_clk]
 set old_net [get_bd_nets -quiet -of_objects $ext_spi_clk]
 if {$old_net ne ""} {
     disconnect_bd_net $old_net $ext_spi_clk
 }
-connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK1] $ext_spi_clk
+connect_bd_net [get_bd_pins processing_system7_0/FCLK_CLK0] $ext_spi_clk
 
 validate_bd_design
 save_bd_design
 
 generate_target all [get_files $bd_path]
-puts "AXI Quad SPI clock: 10 MHz / 16 = 625 kHz"
+puts "AXI Quad SPI runtime clock: 125 MHz / (16 * 8) = 976.5625 kHz"
 close_project
