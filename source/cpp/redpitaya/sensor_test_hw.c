@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -491,7 +492,8 @@ static int read_u64_file(const char *path, uint64_t *value)
     return errno == 0 && end != text ? 0 : -1;
 }
 
-static int open_udmabuf(struct dma_buffer *buffer, const char *device)
+static int open_udmabuf_sized(struct dma_buffer *buffer, const char *device,
+                              size_t required_bytes)
 {
     const char *name = strrchr(device, '/');
     char path[256];
@@ -502,7 +504,7 @@ static int open_udmabuf(struct dma_buffer *buffer, const char *device)
     if (read_u64_file(path, &buffer->physical_address) != 0)
         return -1;
     snprintf(path, sizeof(path), "/sys/class/u-dma-buf/%s/size", name);
-    if (read_u64_file(path, &size) != 0 || size < FRAME_BYTES)
+    if (read_u64_file(path, &size) != 0 || size < required_bytes)
         return -1;
 
     buffer->fd = open(device, O_RDWR | O_SYNC);
@@ -521,12 +523,13 @@ static int open_udmabuf(struct dma_buffer *buffer, const char *device)
 }
 
 static int open_reserved_memory(struct dma_buffer *buffer, int mem_fd,
-                                uint64_t physical_address)
+                                uint64_t physical_address,
+                                size_t required_bytes)
 {
     long page_size = sysconf(_SC_PAGESIZE);
     uint64_t page_base = physical_address & ~((uint64_t)page_size - 1u);
     size_t offset = (size_t)(physical_address - page_base);
-    size_t required = offset + FRAME_BYTES;
+    size_t required = offset + required_bytes;
 
     buffer->fd = -1;
     buffer->physical_address = physical_address;
@@ -820,6 +823,87 @@ static int send_dma_frame(int stream_fd, uint32_t sequence, uint32_t irq_count,
     return send_all(stream_fd, packet, sizeof(packet));
 }
 
+static int send_dma_words(int stream_fd, uint32_t sequence, uint32_t irq_count,
+                          uint32_t sample_count, const uint32_t *words,
+                          size_t word_count)
+{
+    uint32_t *packet;
+    size_t i;
+    int result;
+
+    if (word_count > UINT32_MAX - 6u ||
+        word_count > (SIZE_MAX / sizeof(*packet)) - 6u) {
+        fprintf(stderr, "TCP packet is too large to encode.\n");
+        return -1;
+    }
+
+    packet = malloc((6u + word_count) * sizeof(*packet));
+    if (!packet) {
+        perror("allocate TCP packet");
+        return -1;
+    }
+
+    packet[0] = htonl(SENSOR_TEST_TCP_MAGIC);
+    packet[1] = htonl(SENSOR_TEST_TCP_VERSION);
+    packet[2] = htonl(sequence);
+    packet[3] = htonl(irq_count);
+    packet[4] = htonl(sample_count);
+    packet[5] = htonl((uint32_t)word_count);
+    for (i = 0; i < word_count; ++i)
+        packet[6 + i] = htonl(words[i]);
+
+    result = send_all(stream_fd, packet, (6u + word_count) * sizeof(*packet));
+    free(packet);
+    return result;
+}
+
+static void print_dma_words(unsigned transfer_index, uint32_t irq_count,
+                            uint32_t sample_count, const uint32_t *words,
+                            size_t word_count)
+{
+    size_t i;
+    size_t preview = word_count < 16u ? word_count : 16u;
+
+    printf("\nDMA interrupt sample %u, UIO irq count %" PRIu32
+           ", core sample count %" PRIu32 "\n",
+           transfer_index, irq_count, sample_count);
+    printf("Frame words: %zu, frame bytes: %zu\n",
+           word_count, word_count * sizeof(uint32_t));
+    printf("First %zu words:\n  ", preview);
+    for (i = 0; i < preview; ++i)
+        printf("0x%08" PRIx32 "%c", words[i],
+               i + 1 == preview ? '\n' : ' ');
+
+    if (word_count > preview) {
+        size_t tail_start = word_count > 4u ? word_count - 4u : preview;
+        printf("Last %zu words:\n  ", word_count - tail_start);
+        for (i = tail_start; i < word_count; ++i)
+            printf("0x%08" PRIx32 "%c", words[i],
+                   i + 1 == word_count ? '\n' : ' ');
+    }
+}
+
+static size_t dma_buffer_available_bytes(const struct dma_buffer *buffer)
+{
+    uintptr_t mapping;
+    uintptr_t words;
+    size_t offset;
+
+    if (!buffer || !buffer->mapping || !buffer->words)
+        return 0;
+
+    mapping = (uintptr_t)buffer->mapping;
+    words = (uintptr_t)buffer->words;
+    if (words < mapping)
+        return 0;
+
+    offset = (size_t)(words - mapping);
+    if (offset > buffer->mapping_size)
+        return 0;
+
+    return buffer->mapping_size - offset;
+}
+
 static int ensure_dma_mapped(sensor_test_t *test)
 {
     if (!test)
@@ -876,12 +960,21 @@ int sensor_test_initialize_icm20948(sensor_test_t *test)
 
 int sensor_test_prepare_dma_udmabuf(sensor_test_t *test, const char *device)
 {
+    return sensor_test_prepare_dma_udmabuf_sized(test, device, FRAME_BYTES);
+}
+
+int sensor_test_prepare_dma_udmabuf_sized(sensor_test_t *test,
+                                          const char *device,
+                                          size_t required_bytes)
+{
     if (!test || !device || ensure_dma_mapped(test) != 0)
         return -1;
 
     close_dma_buffer(&test->buffer);
-    if (open_udmabuf(&test->buffer, device) != 0) {
-        fprintf(stderr, "Cannot map %s or read its sysfs address.\n", device);
+    if (open_udmabuf_sized(&test->buffer, device, required_bytes) != 0) {
+        fprintf(stderr, "Cannot map %s, read its sysfs address, or find "
+                        "at least %zu DMA bytes.\n",
+                device, required_bytes);
         fprintf(stderr, "Load u-dma-buf, or use --phys with kernel-reserved RAM.\n");
         return -1;
     }
@@ -891,17 +984,25 @@ int sensor_test_prepare_dma_udmabuf(sensor_test_t *test, const char *device)
 int sensor_test_prepare_dma_reserved(sensor_test_t *test,
                                      uint64_t physical_address)
 {
+    return sensor_test_prepare_dma_reserved_sized(test, physical_address,
+                                                 FRAME_BYTES);
+}
+
+int sensor_test_prepare_dma_reserved_sized(sensor_test_t *test,
+                                           uint64_t physical_address,
+                                           size_t required_bytes)
+{
     int overlap;
 
     if (!test || ensure_dma_mapped(test) != 0)
         return -1;
 
-    overlap = overlaps_system_ram(physical_address, FRAME_BYTES);
+    overlap = overlaps_system_ram(physical_address, required_bytes);
     if (overlap > 0) {
         uint64_t rp_start = 0;
         uint64_t rp_size = 0;
 
-        if (!is_redpitaya_reserved_memory(physical_address, FRAME_BYTES,
+        if (!is_redpitaya_reserved_memory(physical_address, required_bytes,
                                           &rp_start, &rp_size)) {
             fprintf(stderr, "Refusing DMA address 0x%08" PRIx64
                             ": it is still listed as System RAM and is "
@@ -921,7 +1022,7 @@ int sensor_test_prepare_dma_reserved(sensor_test_t *test,
 
     close_dma_buffer(&test->buffer);
     if (open_reserved_memory(&test->buffer, test->mem_fd,
-                             physical_address) != 0) {
+                             physical_address, required_bytes) != 0) {
         perror("map reserved DMA memory");
         return -1;
     }
@@ -1161,6 +1262,155 @@ failure:
     reg_write(core, CORE_CONTROL, 0);
     reg_write(dma, S2MM_DMACR, 0);
     close(uio_fd);
+    return -1;
+}
+
+int sensor_test_run_dma_interrupts_sized(sensor_test_t *test,
+                                         const char *uio_device,
+                                         unsigned transfer_count,
+                                         uint32_t sample_period_ticks,
+                                         int stream_fd,
+                                         int print_frames,
+                                         size_t transfer_bytes)
+{
+    volatile uint32_t *core;
+    volatile uint32_t *dma;
+    struct dma_buffer *buffer;
+    uint32_t *frame = NULL;
+    size_t frame_words;
+    unsigned completed = 0;
+    int core_enabled = 0;
+    int uio_fd;
+
+    if (!test || !test->core || !test->dma || !test->buffer.words) {
+        fprintf(stderr, "DMA is not ready; call a prepare_dma function first.\n");
+        return -1;
+    }
+    if (!uio_device || !*uio_device || sample_period_ticks == 0 ||
+        transfer_bytes == 0 || (transfer_bytes % sizeof(uint32_t)) != 0 ||
+        transfer_bytes > UINT32_MAX) {
+        fprintf(stderr, "Invalid UIO device, sample period, or transfer size.\n");
+        return -1;
+    }
+
+    core = test->core;
+    dma = test->dma;
+    buffer = &test->buffer;
+    frame_words = transfer_bytes / sizeof(uint32_t);
+
+    if (dma_buffer_available_bytes(buffer) < transfer_bytes) {
+        fprintf(stderr, "DMA buffer mapping is too small: need %zu bytes, "
+                        "have %zu bytes.\n",
+                transfer_bytes, dma_buffer_available_bytes(buffer));
+        return -1;
+    }
+    if (buffer->physical_address > UINT32_MAX) {
+        fprintf(stderr, "DMA buffer is outside the DMA's 32-bit address range.\n");
+        return -1;
+    }
+
+    frame = malloc(transfer_bytes);
+    if (!frame) {
+        perror("allocate DMA frame copy");
+        return -1;
+    }
+
+    uio_fd = open(uio_device, O_RDWR);
+    if (uio_fd < 0) {
+        fprintf(stderr, "open %s: %s\n", uio_device, strerror(errno));
+        free(frame);
+        return -1;
+    }
+
+    reg_write(core, CORE_CONTROL, CONTROL_RESET);
+    usleep(1000);
+    reg_write(core, CORE_CONTROL, 0);
+    reg_write(core, CORE_COMMAND, COMMAND_CLEAR);
+    reg_write(core, CORE_PERIOD, sample_period_ticks);
+
+    if (reset_s2mm_dma(dma) != 0)
+        goto failure;
+    reg_write(dma, S2MM_DMACR, DMA_RUN | DMA_IOC_IRQ_EN | DMA_ERR_IRQ_EN);
+
+    printf("Interrupt DMA test: sample period=%" PRIu32
+           " ticks, frame=%zu bytes, UIO=%s\n",
+           sample_period_ticks, transfer_bytes, uio_device);
+
+    while (transfer_count == 0 || completed < transfer_count) {
+        uint32_t irq_count = 0;
+        uint32_t dma_status;
+        size_t i;
+
+        for (i = 0; i < frame_words; ++i)
+            buffer->words[i] = 0xfeed0000u | (uint32_t)i;
+        __sync_synchronize();
+
+        reg_write(dma, S2MM_DMASR, DMA_IRQ_MASK);
+        if (enable_uio_interrupt(uio_fd) != 0)
+            goto failure;
+
+        reg_write(dma, S2MM_DA, (uint32_t)buffer->physical_address);
+        reg_write(dma, S2MM_DA_MSB, 0);
+        reg_write(dma, S2MM_LENGTH, (uint32_t)transfer_bytes);
+
+        if (!core_enabled) {
+            reg_write(core, CORE_CONTROL, CONTROL_ENABLE);
+            core_enabled = 1;
+        }
+
+        if (wait_for_uio_interrupt(uio_fd, &irq_count) != 0)
+            goto failure;
+
+        dma_status = reg_read(dma, S2MM_DMASR);
+        reg_write(dma, S2MM_DMASR, dma_status & DMA_IRQ_MASK);
+
+        if (dma_status & DMA_ERROR_MASK) {
+            fprintf(stderr, "DMA error after interrupt, S2MM_DMASR=0x%08"
+                            PRIx32 "\n", dma_status);
+            goto failure;
+        }
+        if (!(dma_status & DMA_IOC_IRQ)) {
+            fprintf(stderr, "UIO interrupt without DMA completion, "
+                            "S2MM_DMASR=0x%08" PRIx32 "\n",
+                    dma_status);
+            goto failure;
+        }
+
+        __sync_synchronize();
+        for (i = 0; i < frame_words; ++i)
+            frame[i] = buffer->words[i];
+
+        ++completed;
+        if (stream_fd >= 0 &&
+            send_dma_words(stream_fd, completed, irq_count,
+                           reg_read(core, CORE_COUNT), frame,
+                           frame_words) != 0)
+            goto failure;
+
+        if (print_frames) {
+            print_dma_words(completed, irq_count, reg_read(core, CORE_COUNT),
+                            frame, frame_words);
+            fflush(stdout);
+        }
+
+        if (reg_read(core, CORE_STATUS) & STATUS_ERROR) {
+            fprintf(stderr, "Core error code: 0x%08" PRIx32 "\n",
+                    reg_read(core, CORE_ERROR));
+            goto failure;
+        }
+    }
+
+    reg_write(core, CORE_CONTROL, 0);
+    reg_write(dma, S2MM_DMACR, 0);
+    close(uio_fd);
+    free(frame);
+    return 0;
+
+failure:
+    reg_write(core, CORE_CONTROL, 0);
+    reg_write(dma, S2MM_DMACR, 0);
+    close(uio_fd);
+    free(frame);
     return -1;
 }
 
