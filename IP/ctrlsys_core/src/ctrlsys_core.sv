@@ -56,8 +56,8 @@ module ctrlsys_core (
 localparam logic [6:0] SPI_REG_ADDR = 7'd45;
 
 initial begin
-    if (9 < 1)
-        $error("ctrlsys_core requires 9 >= 1");
+    if (15 < 1)
+        $error("ctrlsys_core requires 15 >= 1");
     if (1024 < 8 || (1024 % 8) != 0)
         $error("ctrlsys_core 1024 must be a positive byte multiple");
 end
@@ -300,7 +300,7 @@ always_ff @(posedge clk) begin
         if (packet_writer_packet_done) begin
             data_word0 <= sample_count;
             data_word1 <= 127;
-            data_word2 <= 1143;
+            data_word2 <= 1905;
             data_word3 <= icm_frame.init_read_ts[31:0];
             data_word4 <= icm_frame.init_read_ts[63:32];
             data_word5 <= icm_frame.done_read_ts[31:0];
@@ -312,7 +312,7 @@ end
 
 packet_buffer #(
     .DATA_WIDTH(1024),
-    .DEPTH_WORDS(1143),
+    .DEPTH_WORDS(1905),
     .PACKET_WORDS(127)
 ) u_packet_buffer (
     .clk(clk),

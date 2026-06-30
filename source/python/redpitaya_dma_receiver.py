@@ -19,6 +19,21 @@ HEADER_WORDS = 6
 HEADER_STRUCT = struct.Struct("!" + "I" * HEADER_WORDS)
 MAX_FRAME_WORDS = 1_000_000
 SAMPLE_CLOCK_HZ = 125_000_000
+NUM_INTAN = 8
+NUM_ICM = 4
+INTAN_SAMPLING_RATIO = 30
+INTAN_DATA_BYTES = 64
+ICM_DATA_BYTES = 20
+PACKET_HEADER_BYTES = 68
+INTAN_MEASUREMENT_BYTES = 1 + INTAN_DATA_BYTES
+ICM_MEASUREMENT_BYTES = 1 + ICM_DATA_BYTES
+INTAN_FRAME_BYTES = 16 + NUM_INTAN * INTAN_MEASUREMENT_BYTES
+ICM_FRAME_BYTES = 16 + NUM_ICM * ICM_MEASUREMENT_BYTES
+PACKET_PAYLOAD_BYTES = (
+    INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES
+    + ICM_FRAME_BYTES
+    + PACKET_HEADER_BYTES
+)
 
 
 @dataclass
@@ -31,6 +46,15 @@ class SampleRecord:
     fpga_start_ticks: int
     fpga_done_ticks: int
     read_us: float
+
+
+@dataclass
+class CapturedPacket:
+    sequence: int
+    irq_count: int
+    core_count: int
+    frame_words: int
+    frame_bytes: bytes
 
 
 def recv_exact(sock: socket.socket, length: int) -> bytes:
@@ -79,6 +103,108 @@ def sensor_bytes_from_frame(frame: tuple[int, ...]) -> bytes:
         shift = (3 - index % 4) * 8
         values.append((word >> shift) & 0xFF)
     return bytes(values)
+
+
+def frame_words_to_dma_bytes(frame: tuple[int, ...]) -> bytes:
+    return b"".join(word.to_bytes(4, "little") for word in frame)
+
+
+def hex_preview(data: bytes, max_bytes: int) -> str:
+    if len(data) <= max_bytes:
+        return data.hex(" ")
+    return data[:max_bytes].hex(" ") + f" ... ({len(data)} bytes total)"
+
+
+def read_u64_be(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset:offset + 8], "big")
+
+
+def print_intan_frame(data: bytes, frame_index: int, max_sensors: int,
+                      max_data_bytes: int) -> None:
+    offset = frame_index * INTAN_FRAME_BYTES
+    init_ts = read_u64_be(data, offset)
+    done_ts = read_u64_be(data, offset + 8)
+
+    print(f"  Intan frame {frame_index}: init_ts={init_ts} done_ts={done_ts}")
+    offset += 16
+    for sensor_index in range(min(NUM_INTAN, max_sensors)):
+        sensor_offset = offset + sensor_index * INTAN_MEASUREMENT_BYTES
+        sensor_id = data[sensor_offset]
+        sensor_data = data[
+            sensor_offset + 1:sensor_offset + 1 + INTAN_DATA_BYTES
+        ]
+        print(
+            f"    Intan measurement {sensor_index}: "
+            f"sensor_id={sensor_id} data={hex_preview(sensor_data, max_data_bytes)}"
+        )
+
+
+def print_icm_frame(data: bytes, max_sensors: int, max_data_bytes: int) -> None:
+    offset = INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES
+    init_ts = read_u64_be(data, offset)
+    done_ts = read_u64_be(data, offset + 8)
+
+    print(f"  ICM frame: init_ts={init_ts} done_ts={done_ts}")
+    offset += 16
+    for sensor_index in range(min(NUM_ICM, max_sensors)):
+        sensor_offset = offset + sensor_index * ICM_MEASUREMENT_BYTES
+        sensor_id = data[sensor_offset]
+        sensor_data = data[sensor_offset + 1:sensor_offset + 1 + ICM_DATA_BYTES]
+        print(
+            f"    ICM measurement {sensor_index}: "
+            f"sensor_id={sensor_id} data={hex_preview(sensor_data, max_data_bytes)}"
+        )
+
+
+def print_packet_trailer(data: bytes, frame_words: int) -> None:
+    if len(data) < PACKET_PAYLOAD_BYTES:
+        print("  Packet is too short to contain the expected trailer/header")
+        return
+
+    offset = INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES + ICM_FRAME_BYTES
+    packet_num = int.from_bytes(data[offset:offset + 4], "big")
+    intan_frame_count = int.from_bytes(data[offset + 4:offset + 8], "big")
+    flags = data[offset + 8:offset + PACKET_HEADER_BYTES]
+    padding = len(data) - PACKET_PAYLOAD_BYTES
+
+    print(
+        f"  Trailer/header: packet_num={packet_num} "
+        f"intan_frame_count={intan_frame_count} "
+        f"flags={hex_preview(flags, 16)} padding_bytes={padding} "
+        f"frame_words={frame_words}"
+    )
+
+
+def print_captured_sensor_data(packets: list[CapturedPacket],
+                               max_intan_frames: int,
+                               max_sensors: int,
+                               max_data_bytes: int) -> None:
+    if not packets:
+        print("no captured sensor packets to print")
+        return
+
+    print("\nDecoded sensor data:")
+    for packet in packets:
+        print(
+            f"Packet seq={packet.sequence} irq={packet.irq_count} "
+            f"core_count={packet.core_count}"
+        )
+        if len(packet.frame_bytes) < PACKET_PAYLOAD_BYTES:
+            print(
+                f"  Expected at least {PACKET_PAYLOAD_BYTES} payload bytes, "
+                f"received {len(packet.frame_bytes)} bytes"
+            )
+            continue
+
+        for frame_index in range(min(INTAN_SAMPLING_RATIO, max_intan_frames)):
+            print_intan_frame(
+                packet.frame_bytes,
+                frame_index,
+                max_sensors,
+                max_data_bytes,
+            )
+        print_icm_frame(packet.frame_bytes, max_sensors, max_data_bytes)
+        print_packet_trailer(packet.frame_bytes, packet.frame_words)
 
 
 def open_csv_writer(path: str | None) -> tuple[object | None, csv.writer | None]:
@@ -170,6 +296,16 @@ def main() -> int:
                         help="write received samples to a CSV file")
     parser.add_argument("--flush-every", type=int, default=1000,
                         help="flush the CSV file every N rows; 0 flushes only at the end")
+    parser.add_argument("--print-sensor-data", action="store_true",
+                        help="print decoded Intan/ICM packet contents after capture")
+    parser.add_argument("--print-packets", type=int, default=1,
+                        help="number of received packets to decode after capture")
+    parser.add_argument("--print-intan-frames", type=int, default=2,
+                        help="Intan frames to decode per printed packet")
+    parser.add_argument("--print-sensors", type=int, default=8,
+                        help="sensor measurements to decode per printed frame")
+    parser.add_argument("--print-data-bytes", type=int, default=64,
+                        help="data bytes to print per decoded measurement")
     args = parser.parse_args()
 
     header_size = HEADER_STRUCT.size
@@ -177,6 +313,7 @@ def main() -> int:
     previous_perf_ns: int | None = None
     previous_start_ticks: int | None = None
     records: list[SampleRecord] = []
+    captured_packets: list[CapturedPacket] = []
     received = 0
     csv_file, csv_writer = open_csv_writer(args.csv)
 
@@ -212,6 +349,7 @@ def main() -> int:
                 previous_perf_ns = arrival_perf_ns
 
                 frame = struct.unpack("!" + "I" * frame_words, frame_payload)
+                frame_bytes = frame_words_to_dma_bytes(frame)
 
                 if frame_words == FRAME_WORDS:
                     start_ticks = (frame[1] << 32) | frame[0]
@@ -240,6 +378,17 @@ def main() -> int:
                         fpga_start_ticks=start_ticks,
                         fpga_done_ticks=done_ticks,
                         read_us=read_us,
+                    ))
+                if (
+                    args.print_sensor_data
+                    and len(captured_packets) < max(0, args.print_packets)
+                ):
+                    captured_packets.append(CapturedPacket(
+                        sequence=sequence,
+                        irq_count=irq_count,
+                        core_count=core_count,
+                        frame_words=frame_words,
+                        frame_bytes=frame_bytes,
                     ))
 
                 if csv_writer is not None:
@@ -286,6 +435,13 @@ def main() -> int:
             csv_file.close()
         if args.plot:
             plot_records(records)
+        if args.print_sensor_data:
+            print_captured_sensor_data(
+                captured_packets,
+                max(0, args.print_intan_frames),
+                max(0, args.print_sensors),
+                max(0, args.print_data_bytes),
+            )
 
     return 0
 

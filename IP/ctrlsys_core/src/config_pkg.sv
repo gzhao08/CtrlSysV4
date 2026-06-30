@@ -6,7 +6,7 @@ package config_pkg;
 	localparam int ICM_DATA_BYTES = 20;
 	localparam int INTAN_DATA_BYTES = 64;
 	localparam int INTAN_SAMPLING_RATIO = 30;
-	localparam int BUFFER_SIZE = 9;
+	localparam int BUFFER_SIZE = 15;
 	localparam int AXIS_DATA_WIDTH = 1024;
 
 	// measurement = one sensor's data
