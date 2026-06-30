@@ -173,6 +173,8 @@ def choose_dma_byte_order(frame: tuple[int, ...]) -> str:
         for candidate in candidates
     ]
     scored.sort(reverse=True)
+    if scored[0][0] < 10:
+        return "little"
     return scored[0][1]
 
 
