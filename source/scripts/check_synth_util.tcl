@@ -16,5 +16,6 @@ read_verilog -sv [list \
     [file join $hdl_dir packet_to_axis.sv] \
     [file join $hdl_dir ctrlsys_core.sv]]
 
-synth_design -rtl -top ctrlsys_core
+synth_design -top ctrlsys_core
+report_utilization -hierarchical
 exit

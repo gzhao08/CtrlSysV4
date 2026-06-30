@@ -446,7 +446,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>e2f8d878</spirit:value>
+            <spirit:value>de982c73</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -462,7 +462,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>e2f8d878</spirit:value>
+            <spirit:value>de982c73</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -476,7 +476,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>4f87a410</spirit:value>
+            <spirit:value>6cd53d2c</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -552,7 +552,7 @@
         <spirit:wire>
           <spirit:direction>in</spirit:direction>
           <spirit:vector>
-            <spirit:left spirit:format="long" spirit:resolve="dependent" spirit:dependency="(spirit:decode(id(&apos;MODELPARAM_VALUE.NUM_SENSORS&apos;)) - 1)">2</spirit:left>
+            <spirit:left spirit:format="long">3</spirit:left>
             <spirit:right spirit:format="long">0</spirit:right>
           </spirit:vector>
           <spirit:wireTypeDefs>
@@ -754,7 +754,7 @@
         <spirit:wire>
           <spirit:direction>out</spirit:direction>
           <spirit:vector>
-            <spirit:left spirit:format="long">31</spirit:left>
+            <spirit:left spirit:format="long">1023</spirit:left>
             <spirit:right spirit:format="long">0</spirit:right>
           </spirit:vector>
           <spirit:wireTypeDefs>
@@ -771,7 +771,7 @@
         <spirit:wire>
           <spirit:direction>out</spirit:direction>
           <spirit:vector>
-            <spirit:left spirit:format="long">3</spirit:left>
+            <spirit:left spirit:format="long">127</spirit:left>
             <spirit:right spirit:format="long">0</spirit:right>
           </spirit:vector>
           <spirit:wireTypeDefs>
@@ -1139,18 +1139,6 @@
         </spirit:wire>
       </spirit:port>
     </spirit:ports>
-    <spirit:modelParameters>
-      <spirit:modelParameter xsi:type="spirit:nameValueTypeType" spirit:dataType="integer">
-        <spirit:name>NUM_SENSORS</spirit:name>
-        <spirit:displayName>Num Sensors</spirit:displayName>
-        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.NUM_SENSORS">3</spirit:value>
-      </spirit:modelParameter>
-      <spirit:modelParameter spirit:dataType="integer">
-        <spirit:name>BUFFER_SIZE</spirit:name>
-        <spirit:displayName>Buffer Size</spirit:displayName>
-        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.BUFFER_SIZE">5</spirit:value>
-      </spirit:modelParameter>
-    </spirit:modelParameters>
   </spirit:model>
   <spirit:choices>
     <spirit:choice>
@@ -1173,12 +1161,22 @@
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/SPI_mux.sv</spirit:name>
+        <spirit:name>src/config_pkg.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/SPI_reader.sv</spirit:name>
+        <spirit:name>src/ICM_reader.sv</spirit:name>
+        <spirit:fileType>systemVerilogSource</spirit:fileType>
+        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
+      </spirit:file>
+      <spirit:file>
+        <spirit:name>src/Intan_reader.sv</spirit:name>
+        <spirit:fileType>systemVerilogSource</spirit:fileType>
+        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
+      </spirit:file>
+      <spirit:file>
+        <spirit:name>src/SPI_mux.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
@@ -1188,17 +1186,17 @@
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/config_pkg.sv</spirit:name>
+        <spirit:name>src/packet_buffer.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/data_buff.sv</spirit:name>
+        <spirit:name>src/packet_to_axis.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/frame_to_axis.sv</spirit:name>
+        <spirit:name>src/packet_writer.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
@@ -1210,7 +1208,7 @@
       <spirit:file>
         <spirit:name>src/ctrlsys_core.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_b03c560b</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_3360e718</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
@@ -1227,12 +1225,22 @@
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/SPI_mux.sv</spirit:name>
+        <spirit:name>src/config_pkg.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/SPI_reader.sv</spirit:name>
+        <spirit:name>src/ICM_reader.sv</spirit:name>
+        <spirit:fileType>systemVerilogSource</spirit:fileType>
+        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
+      </spirit:file>
+      <spirit:file>
+        <spirit:name>src/Intan_reader.sv</spirit:name>
+        <spirit:fileType>systemVerilogSource</spirit:fileType>
+        <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
+      </spirit:file>
+      <spirit:file>
+        <spirit:name>src/SPI_mux.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
@@ -1242,17 +1250,17 @@
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/config_pkg.sv</spirit:name>
+        <spirit:name>src/packet_buffer.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/data_buff.sv</spirit:name>
+        <spirit:name>src/packet_to_axis.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
       <spirit:file>
-        <spirit:name>src/frame_to_axis.sv</spirit:name>
+        <spirit:name>src/packet_writer.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
@@ -1272,23 +1280,13 @@
       <spirit:file>
         <spirit:name>xgui/ctrlsys_core_v1_0.tcl</spirit:name>
         <spirit:fileType>tclSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_7b7db78e</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_f64a5dae</spirit:userFileType>
         <spirit:userFileType>XGUI_VERSION_2</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
   </spirit:fileSets>
   <spirit:description>Multi-sensor SPI acquisition core with AXI4-Lite control and AXI4-Stream output</spirit:description>
   <spirit:parameters>
-    <spirit:parameter>
-      <spirit:name>NUM_SENSORS</spirit:name>
-      <spirit:displayName>Num Sensors</spirit:displayName>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.NUM_SENSORS">3</spirit:value>
-    </spirit:parameter>
-    <spirit:parameter>
-      <spirit:name>BUFFER_SIZE</spirit:name>
-      <spirit:displayName>Buffer Size</spirit:displayName>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.BUFFER_SIZE">5</spirit:value>
-    </spirit:parameter>
     <spirit:parameter>
       <spirit:name>Component_Name</spirit:name>
       <spirit:value spirit:resolve="user" spirit:id="PARAM_VALUE.Component_Name" spirit:order="1">ctrlsys_core_v1_0</spirit:value>
@@ -1314,16 +1312,15 @@
       <xilinx:displayName>CtrlSysV4 Control System Core</xilinx:displayName>
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-06-22T23:52:40Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-06-30T17:29:49Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="d895b2b1"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="e158a12f"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="64d51c46"/>
-      <xilinx:checksum xilinx:scope="ports" xilinx:value="f2c1230f"/>
-      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="dde55a13"/>
-      <xilinx:checksum xilinx:scope="parameters" xilinx:value="b89654df"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="7f251947"/>
+      <xilinx:checksum xilinx:scope="ports" xilinx:value="20b0a130"/>
+      <xilinx:checksum xilinx:scope="parameters" xilinx:value="a416c507"/>
     </xilinx:packagingInfo>
   </spirit:vendorExtensions>
 </spirit:component>

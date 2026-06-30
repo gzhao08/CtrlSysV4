@@ -2,17 +2,14 @@
 
 import config_pkg::*;
 
-module ctrlsys_core #(
-    parameter integer NUM_SENSORS = 3,
-    parameter integer BUFFER_SIZE = 5
-)(
+module ctrlsys_core (
     input  logic                         clk,
     input  logic                         rst_n,
 
     output logic                         spi_sclk,
     output logic                         spi_mosi,
     output logic                         spi_cs_n,
-    input  logic [NUM_SENSORS-1:0]       spi_miso,
+    input  logic [NUM_ICM-1:0]           spi_miso,
 
     output logic                         axi_spi_io0_i,
     input  logic                         axi_spi_io0_o,
@@ -29,8 +26,8 @@ module ctrlsys_core #(
 
     output logic                         m_axis_tvalid,
     input  logic                         m_axis_tready,
-    output logic [31:0]                  m_axis_tdata,
-    output logic [3:0]                   m_axis_tkeep,
+    output logic [AXIS_DATA_WIDTH-1:0]   m_axis_tdata,
+    output logic [AXIS_DATA_WIDTH/8-1:0] m_axis_tkeep,
     output logic                         m_axis_tlast,
 
     input  logic                         s00_axi_aclk,
@@ -57,43 +54,51 @@ module ctrlsys_core #(
 );
 
 localparam logic [6:0] SPI_REG_ADDR = 7'd45;
-localparam integer SPI_DATA_BYTES = SENSOR_DATA_BYTES;
 
 initial begin
-    if (NUM_SENSORS < 1 || NUM_SENSORS > 32)
-        $error("ctrlsys_core requires 1 <= NUM_SENSORS <= 32");
     if (BUFFER_SIZE < 1)
         $error("ctrlsys_core requires BUFFER_SIZE >= 1");
+    if (AXIS_DATA_WIDTH < 8 || (AXIS_DATA_WIDTH % 8) != 0)
+        $error("ctrlsys_core AXIS_DATA_WIDTH must be a positive byte multiple");
 end
 
 logic [63:0] timestamp;
-logic start_read;
+logic start_read_icm;
+logic start_read_intan;
 logic spi_start;
 logic core_rst;
 
-raw_packet_t sensor_frame [NUM_SENSORS];
-raw_packet_t fifo_frame [NUM_SENSORS];
-raw_packet_t status_frame;
+ICM_frame_t icm_frame;
+Intan_frame_t intan_frame;
 
-logic [8*SPI_DATA_BYTES-1:0] spi_data [NUM_SENSORS-1:0];
-logic [63:0] spi_start_timestamp;
-logic [63:0] spi_done_timestamp;
 logic spi_reader_sclk;
 logic spi_reader_mosi;
 logic spi_reader_cs_n;
-logic [NUM_SENSORS-1:0] spi_reader_miso;
+logic [NUM_ICM-1:0] spi_reader_miso;
 logic spi_busy;
 logic spi_done;
+logic intan_busy;
+logic intan_done;
 logic axi_spi_miso;
 
-logic frame_wr_en;
-logic frame_rd_en;
-logic frame_empty;
-logic frame_full;
+logic packet_fifo_full;
+logic packet_fifo_empty;
+logic packet_fifo_overflow;
+logic packet_fifo_underflow;
+logic packet_fifo_rd_en;
+logic packet_fifo_wr_en;
+logic packet_fifo_packet_space;
+logic [AXIS_DATA_WIDTH-1:0] packet_fifo_wr_data;
+logic [AXIS_DATA_WIDTH-1:0] packet_fifo_rd_data;
+logic packet_writer_ready;
+logic packet_writer_word_valid;
+logic packet_writer_packet_done;
 
 logic axil_enable;
 logic axil_soft_reset;
 logic [31:0] axil_sample_period;
+logic [63:0] icm_sample_period;
+logic [63:0] intan_sample_period;
 logic axil_use_axi;
 logic axil_clear_error;
 logic axil_reset_sample_counter;
@@ -126,12 +131,14 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 assign core_rst = rst_sync || axil_soft_reset;
-assign spi_start = start_read && !axil_use_axi && !frame_full && !spi_busy;
-assign status_frame = sensor_frame[0];
+assign spi_start = start_read_icm && !axil_use_axi && packet_writer_ready && !spi_busy;
 assign axi_spi_io0_i = axi_spi_io0_o;
 assign axi_spi_io1_i = axi_spi_miso;
 assign axi_spi_sck_i = axi_spi_sck_o;
 assign axi_spi_ss_i = axi_spi_ss_o;
+assign icm_sample_period = {32'b0, axil_sample_period};
+assign intan_sample_period = {32'b0, axil_sample_period} / INTAN_SAMPLING_RATIO;
+assign packet_fifo_wr_en = packet_writer_word_valid && !packet_fifo_full;
 
 axil_regs u_axil_regs (
     .enable(axil_enable),
@@ -141,9 +148,9 @@ axil_regs u_axil_regs (
     .clear_error(axil_clear_error),
     .reset_sample_counter(axil_reset_sample_counter),
     .cpu_clear_irq(axil_cpu_clear_irq),
-    .busy(spi_busy || frame_full),
+    .busy(spi_busy || intan_busy || !packet_writer_ready),
     .error(error_latched),
-    .read_in_progress(spi_busy),
+    .read_in_progress(spi_busy || intan_busy),
     .packet_done(packet_done_irq),
     .sample_count(sample_count),
     .error_code(error_code),
@@ -190,22 +197,20 @@ acquisition_controller u_acquisition_controller (
     .rst(core_rst),
     .enable(axil_enable),
     .timestamp(timestamp),
-    .sample_period({32'b0, axil_sample_period}),
-    .startRead(start_read)
+    .sample_period_ICM(icm_sample_period),
+    .sample_period_Intan(intan_sample_period),
+    .startRead_ICM(start_read_icm),
+    .startRead_Intan(start_read_intan)
 );
 
-SPI_reader #(
-    .REG_ADDR(SPI_REG_ADDR),
-    .DATA_BYTES(SPI_DATA_BYTES),
-    .NUM_SENSORS(NUM_SENSORS)
-) u_spi_reader (
+ICM_reader #(
+    .REG_ADDR(SPI_REG_ADDR)
+) u_icm_reader (
     .clk(clk),
     .rst(core_rst),
     .start(spi_start),
     .timestamp(timestamp),
-    .data_out(spi_data),
-    .startRead_timestamp(spi_start_timestamp),
-    .doneRead_timestamp(spi_done_timestamp),
+    .ICM_frame(icm_frame),
     .busy(spi_busy),
     .done(spi_done),
     .sclk(spi_reader_sclk),
@@ -214,8 +219,33 @@ SPI_reader #(
     .cs_n(spi_reader_cs_n)
 );
 
+Intan_reader u_intan_reader (
+    .clk(clk),
+    .rst(core_rst),
+    .start(start_read_intan),
+    .timestamp(timestamp),
+    .Intan_frame(intan_frame),
+    .busy(intan_busy),
+    .done(intan_done)
+);
+
+packet_writer u_packet_writer (
+    .clk(clk),
+    .rst(core_rst || !axil_enable),
+    .ICM_frame_done(spi_done),
+    .Intan_frame_done(intan_done),
+    .ICM_frame_in(icm_frame),
+    .Intan_frame_in(intan_frame),
+    .packet_ready(packet_fifo_packet_space),
+    .ready(packet_writer_ready),
+    .word_valid(packet_writer_word_valid),
+    .word_ready(!packet_fifo_full),
+    .word_data(packet_fifo_wr_data),
+    .packet_done(packet_writer_packet_done)
+);
+
 SPI_mux #(
-    .NUM_SENSORS(NUM_SENSORS)
+    .NUM_SENSORS(NUM_ICM)
 ) u_spi_mux (
     .axi_enable(axil_use_axi && !spi_busy),
     .reader_sclk(spi_reader_sclk),
@@ -231,31 +261,6 @@ SPI_mux #(
     .spi_cs_n(spi_cs_n),
     .spi_miso(spi_miso)
 );
-
-always_ff @(posedge clk) begin
-    if (core_rst) begin
-        frame_wr_en <= 1'b0;
-        for (frame_sensor_index = 0;
-             frame_sensor_index < NUM_SENSORS;
-             frame_sensor_index = frame_sensor_index + 1)
-            sensor_frame[frame_sensor_index] <= '0;
-    end else begin
-        frame_wr_en <= 1'b0;
-
-        if (spi_done && !frame_full) begin
-            frame_wr_en <= 1'b1;
-            for (frame_sensor_index = 0;
-                 frame_sensor_index < NUM_SENSORS;
-                 frame_sensor_index = frame_sensor_index + 1) begin
-                sensor_frame[frame_sensor_index] <= {
-                    spi_start_timestamp,
-                    spi_done_timestamp,
-                    spi_data[frame_sensor_index]
-                };
-            end
-        end
-    end
-end
 
 always_ff @(posedge clk) begin
     if (core_rst) begin
@@ -279,50 +284,56 @@ always_ff @(posedge clk) begin
 
         if (axil_cpu_clear_irq)
             packet_done_irq <= 1'b0;
-        else if (frame_wr_en)
+        else if (packet_writer_packet_done)
             packet_done_irq <= 1'b1;
 
         if (axil_reset_sample_counter)
             sample_count <= 32'b0;
-        else if (frame_wr_en)
+        else if (packet_writer_packet_done)
             sample_count <= sample_count + 1'b1;
 
-        if (frame_wr_en) begin
-            data_word0 <= status_frame.init_read_ts[31:0];
-            data_word1 <= status_frame.init_read_ts[63:32];
-            data_word2 <= 32'b0;
-            data_word3 <= status_frame.sensor_data[159:128];
-            data_word4 <= status_frame.sensor_data[127:96];
-            data_word5 <= status_frame.sensor_data[95:64];
-            data_word6 <= status_frame.sensor_data[63:32];
-            data_word7 <= status_frame.sensor_data[31:0];
+        if (packet_fifo_overflow || packet_fifo_underflow) begin
+            error_latched <= 1'b1;
+            error_code <= 32'h0000_0001;
+        end
+
+        if (packet_writer_packet_done) begin
+            data_word0 <= sample_count;
+            data_word1 <= PACKET_AXIS_WORDS;
+            data_word2 <= PACKET_BUFFER_WORDS;
+            data_word3 <= icm_frame.init_read_ts[31:0];
+            data_word4 <= icm_frame.init_read_ts[63:32];
+            data_word5 <= icm_frame.done_read_ts[31:0];
+            data_word6 <= icm_frame.done_read_ts[63:32];
+            data_word7 <= PACKET_BYTES;
         end
     end
 end
 
-data_buff #(
-    .NUM_SENSORS(NUM_SENSORS),
-    .BUFFER_SIZE(BUFFER_SIZE)
-) u_data_buff (
+packet_buffer #(
+    .DATA_WIDTH(AXIS_DATA_WIDTH),
+    .DEPTH_WORDS(PACKET_BUFFER_WORDS),
+    .PACKET_WORDS(PACKET_AXIS_WORDS)
+) u_packet_buffer (
     .clk(clk),
     .rst(core_rst),
-    .wr_en(frame_wr_en),
-    .rd_en(frame_rd_en),
-    .in_frame(sensor_frame),
-    .out_frame(fifo_frame),
-    .empty(frame_empty),
-    .full(frame_full)
+    .wr_en(packet_fifo_wr_en),
+    .wr_data(packet_fifo_wr_data),
+    .rd_en(packet_fifo_rd_en),
+    .rd_data(packet_fifo_rd_data),
+    .empty(packet_fifo_empty),
+    .full(packet_fifo_full),
+    .packet_space(packet_fifo_packet_space),
+    .overflow(packet_fifo_overflow),
+    .underflow(packet_fifo_underflow)
 );
 
-frame_to_axis #(
-    .NUM_SENSORS(NUM_SENSORS),
-    .data_width(32)
-) u_frame_to_axis (
+packet_to_axis u_packet_to_axis (
     .clk(clk),
     .rst(core_rst),
-    .rd_en(frame_rd_en),
-    .empty(frame_empty),
-    .frame(fifo_frame),
+    .fifo_rd_en(packet_fifo_rd_en),
+    .fifo_rd_data(packet_fifo_rd_data),
+    .fifo_empty(packet_fifo_empty),
     .m_axis_tvalid(m_axis_tvalid),
     .m_axis_tready(m_axis_tready),
     .m_axis_tdata(m_axis_tdata),
