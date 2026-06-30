@@ -175,6 +175,61 @@ def print_packet_trailer(data: bytes, frame_words: int) -> None:
     )
 
 
+def find_plausible_trailer_offsets(data: bytes) -> list[int]:
+    offsets: list[int] = []
+    search_start = max(0, PACKET_PAYLOAD_BYTES - 2048)
+    search_end = min(len(data) - PACKET_HEADER_BYTES + 1,
+                     PACKET_PAYLOAD_BYTES + 2048)
+
+    for offset in range(search_start, search_end):
+        intan_frame_count = int.from_bytes(data[offset + 4:offset + 8], "big")
+        flags = data[offset + 8:offset + PACKET_HEADER_BYTES]
+        if intan_frame_count == INTAN_SAMPLING_RATIO and flags.count(0) >= 56:
+            offsets.append(offset)
+
+    return offsets
+
+
+def print_packet_sanity(data: bytes) -> None:
+    expected_trailer_offset = (
+        INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES + ICM_FRAME_BYTES
+    )
+    expected_ids = list(range(NUM_INTAN - 1, -1, -1))
+    intan_ids = [
+        data[16 + index * INTAN_MEASUREMENT_BYTES]
+        for index in range(NUM_INTAN)
+    ] if len(data) >= INTAN_FRAME_BYTES else []
+
+    print(
+        f"  Sanity: expected Intan IDs at frame 0 physical offsets "
+        f"{expected_ids}, observed {intan_ids}"
+    )
+
+    if len(data) >= expected_trailer_offset + 8:
+        intan_frame_count = int.from_bytes(
+            data[expected_trailer_offset + 4:expected_trailer_offset + 8],
+            "big",
+        )
+        if intan_frame_count != INTAN_SAMPLING_RATIO:
+            candidates = find_plausible_trailer_offsets(data)
+            if candidates:
+                shifts = [
+                    candidate - expected_trailer_offset
+                    for candidate in candidates[:8]
+                ]
+                print(
+                    f"  Sanity: expected trailer offset "
+                    f"{expected_trailer_offset}, but intan_frame_count="
+                    f"{intan_frame_count}; plausible trailer shifts={shifts}"
+                )
+            else:
+                print(
+                    f"  Sanity: expected trailer offset "
+                    f"{expected_trailer_offset}, but intan_frame_count="
+                    f"{intan_frame_count}; no nearby plausible trailer found"
+                )
+
+
 def print_captured_sensor_data(packets: list[CapturedPacket],
                                max_intan_frames: int,
                                max_sensors: int,
@@ -205,6 +260,7 @@ def print_captured_sensor_data(packets: list[CapturedPacket],
             )
         print_icm_frame(packet.frame_bytes, max_sensors, max_data_bytes)
         print_packet_trailer(packet.frame_bytes, packet.frame_words)
+        print_packet_sanity(packet.frame_bytes)
 
 
 def open_csv_writer(path: str | None) -> tuple[object | None, csv.writer | None]:
