@@ -15,8 +15,9 @@ from dataclasses import dataclass
 MAGIC = 0x4353444D  # "CSDM"
 VERSION = 1
 FRAME_WORDS = 9
-PACKET_WORDS = 6 + FRAME_WORDS
-PACKET_STRUCT = struct.Struct("!" + "I" * PACKET_WORDS)
+HEADER_WORDS = 6
+HEADER_STRUCT = struct.Struct("!" + "I" * HEADER_WORDS)
+MAX_FRAME_WORDS = 1_000_000
 SAMPLE_CLOCK_HZ = 125_000_000
 
 
@@ -69,6 +70,8 @@ def timestamp_text(epoch_ns: int) -> str:
 
 
 def sensor_bytes_from_frame(frame: tuple[int, ...]) -> bytes:
+    if len(frame) < FRAME_WORDS:
+        return b""
     data_words = frame[4:9]
     values = []
     for index in range(20):
@@ -169,7 +172,7 @@ def main() -> int:
                         help="flush the CSV file every N rows; 0 flushes only at the end")
     args = parser.parse_args()
 
-    packet_size = PACKET_STRUCT.size
+    header_size = HEADER_STRUCT.size
     first_perf_ns: int | None = None
     previous_perf_ns: int | None = None
     previous_start_ticks: int | None = None
@@ -180,10 +183,22 @@ def main() -> int:
     try:
         with socket.create_connection((args.host, args.port)) as sock:
             configure_low_latency_socket(sock)
-            print(f"connected to {args.host}:{args.port}, packet_size={packet_size}")
+            print(f"connected to {args.host}:{args.port}, header_size={header_size}")
 
             while args.count == 0 or received < args.count:
-                payload = recv_exact(sock, packet_size)
+                header_payload = recv_exact(sock, header_size)
+                magic, version, sequence, irq_count, core_count, frame_words = (
+                    HEADER_STRUCT.unpack(header_payload)
+                )
+
+                if magic != MAGIC:
+                    raise ValueError(f"bad magic 0x{magic:08x}")
+                if version != VERSION:
+                    raise ValueError(f"unsupported version {version}")
+                if frame_words == 0 or frame_words > MAX_FRAME_WORDS:
+                    raise ValueError(f"unexpected frame_words {frame_words}")
+
+                frame_payload = recv_exact(sock, frame_words * 4)
                 set_tcp_quickack(sock)
                 arrival_epoch_ns = time.time_ns()
                 arrival_perf_ns = time.perf_counter_ns()
@@ -196,26 +211,25 @@ def main() -> int:
                 elapsed_ms = (arrival_perf_ns - first_perf_ns) / 1_000_000
                 previous_perf_ns = arrival_perf_ns
 
-                words = PACKET_STRUCT.unpack(payload)
-                magic, version, sequence, irq_count, core_count, frame_words = words[:6]
-                frame = words[6:]
+                frame = struct.unpack("!" + "I" * frame_words, frame_payload)
 
-                if magic != MAGIC:
-                    raise ValueError(f"bad magic 0x{magic:08x}")
-                if version != VERSION:
-                    raise ValueError(f"unsupported version {version}")
-                if frame_words != FRAME_WORDS:
-                    raise ValueError(f"unexpected frame_words {frame_words}")
-
-                start_ticks = (frame[1] << 32) | frame[0]
-                done_ticks = (frame[3] << 32) | frame[2]
+                if frame_words == FRAME_WORDS:
+                    start_ticks = (frame[1] << 32) | frame[0]
+                    done_ticks = (frame[3] << 32) | frame[2]
+                else:
+                    start_ticks = 0
+                    done_ticks = 0
                 fpga_delta_ticks = (
-                    0 if previous_start_ticks is None
+                    0 if previous_start_ticks is None or start_ticks == 0
                     else start_ticks - previous_start_ticks
                 )
                 fpga_delta_ms = fpga_delta_ticks * 1_000 / SAMPLE_CLOCK_HZ
-                previous_start_ticks = start_ticks
-                read_us = (done_ticks - start_ticks) * 1_000_000 / SAMPLE_CLOCK_HZ
+                if start_ticks != 0:
+                    previous_start_ticks = start_ticks
+                read_us = (
+                    0.0 if start_ticks == 0
+                    else (done_ticks - start_ticks) * 1_000_000 / SAMPLE_CLOCK_HZ
+                )
                 if args.plot:
                     records.append(SampleRecord(
                         sequence=sequence,
@@ -251,9 +265,13 @@ def main() -> int:
                     f"{timestamp_text(arrival_epoch_ns)} "
                     f"elapsed_ms={elapsed_ms:.3f} delta_ms={delta_ms:.3f} "
                     f"seq={sequence} irq={irq_count} core_count={core_count} "
-                    f"fpga_start={start_ticks} fpga_done={done_ticks} "
-                    f"read_us={read_us:.3f}"
+                    f"frame_words={frame_words}"
                 )
+                if frame_words == FRAME_WORDS:
+                    line += (
+                        f" fpga_start={start_ticks} fpga_done={done_ticks} "
+                        f"read_us={read_us:.3f}"
+                    )
                 if args.raw_hex:
                     line += " sensor_hex=" + sensor_bytes_from_frame(frame).hex(" ")
                 if not args.quiet:
