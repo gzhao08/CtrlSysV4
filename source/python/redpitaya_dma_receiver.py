@@ -332,6 +332,26 @@ def print_captured_sensor_data(packets: list[CapturedPacket],
         print_packet_sanity(packet.frame_bytes)
 
 
+def print_captured_raw_bytes(packets: list[CapturedPacket],
+                             bytes_per_line: int) -> None:
+    if not packets:
+        print("no captured sensor packets to print")
+        return
+
+    bytes_per_line = max(1, bytes_per_line)
+
+    print("\nRaw packet bytes:")
+    for packet in packets:
+        print(
+            f"Packet seq={packet.sequence} irq={packet.irq_count} "
+            f"core_count={packet.core_count} bytes={len(packet.frame_bytes)}"
+        )
+
+        for offset in range(0, len(packet.frame_bytes), bytes_per_line):
+            chunk = packet.frame_bytes[offset:offset + bytes_per_line]
+            print(f"  {offset:05x}: {chunk.hex(' ')}")
+
+
 def open_csv_writer(path: str | None) -> tuple[object | None, csv.writer | None]:
     if path is None:
         return None, None
@@ -423,14 +443,18 @@ def main() -> int:
                         help="flush the CSV file every N rows; 0 flushes only at the end")
     parser.add_argument("--print-sensor-data", action="store_true",
                         help="print decoded Intan/ICM packet contents after capture")
+    parser.add_argument("--print-raw-bytes", action="store_true",
+                        help="print raw reconstructed DMA packet bytes after capture")
     parser.add_argument("--print-packets", type=int, default=1,
-                        help="number of received packets to decode after capture")
+                        help="number of received packets to print after capture")
     parser.add_argument("--print-intan-frames", type=int, default=2,
                         help="Intan frames to decode per printed packet")
     parser.add_argument("--print-sensors", type=int, default=8,
                         help="sensor measurements to decode per printed frame")
     parser.add_argument("--print-data-bytes", type=int, default=64,
                         help="data bytes to print per decoded measurement")
+    parser.add_argument("--raw-bytes-per-line", type=int, default=32,
+                        help="bytes per line when using --print-raw-bytes")
     parser.add_argument("--dma-byte-order",
                         choices=("auto", "little", "swap16", "big", "reverse16"),
                         default="auto",
@@ -485,7 +509,7 @@ def main() -> int:
                         if args.dma_byte_order == "auto"
                         else args.dma_byte_order
                     )
-                    if args.print_sensor_data:
+                    if args.print_sensor_data or args.print_raw_bytes:
                         print(
                             f"using DMA word byte order: "
                             f"{selected_dma_byte_order}"
@@ -524,7 +548,7 @@ def main() -> int:
                         read_us=read_us,
                     ))
                 if (
-                    args.print_sensor_data
+                    (args.print_sensor_data or args.print_raw_bytes)
                     and len(captured_packets) < max(0, args.print_packets)
                 ):
                     captured_packets.append(CapturedPacket(
@@ -585,6 +609,11 @@ def main() -> int:
                 max(0, args.print_intan_frames),
                 max(0, args.print_sensors),
                 max(0, args.print_data_bytes),
+            )
+        if args.print_raw_bytes:
+            print_captured_raw_bytes(
+                captured_packets,
+                args.raw_bytes_per_line,
             )
 
     return 0
