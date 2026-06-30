@@ -105,8 +105,75 @@ def sensor_bytes_from_frame(frame: tuple[int, ...]) -> bytes:
     return bytes(values)
 
 
-def frame_words_to_dma_bytes(frame: tuple[int, ...]) -> bytes:
-    return b"".join(word.to_bytes(4, "little") for word in frame)
+def word_bytes(word: int, byte_order: str) -> bytes:
+    little = word.to_bytes(4, "little")
+
+    if byte_order == "little":
+        return little
+    if byte_order == "big":
+        return word.to_bytes(4, "big")
+    if byte_order == "swap16":
+        return little[2:4] + little[0:2]
+    if byte_order == "reverse16":
+        return bytes((little[1], little[0], little[3], little[2]))
+
+    raise ValueError(f"unsupported DMA word byte order {byte_order!r}")
+
+
+def frame_words_to_dma_bytes(frame: tuple[int, ...],
+                             byte_order: str = "little") -> bytes:
+    return b"".join(word_bytes(word, byte_order) for word in frame)
+
+
+def packet_layout_score(data: bytes) -> int:
+    score = 0
+    expected_trailer_offset = (
+        INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES + ICM_FRAME_BYTES
+    )
+
+    if len(data) >= INTAN_FRAME_BYTES:
+        expected_ids = list(range(NUM_INTAN - 1, -1, -1))
+        intan_ids = [
+            data[16 + index * INTAN_MEASUREMENT_BYTES]
+            for index in range(NUM_INTAN)
+        ]
+        score += sum(
+            1 for observed, expected in zip(intan_ids, expected_ids)
+            if observed == expected
+        )
+
+    if len(data) >= expected_trailer_offset + PACKET_HEADER_BYTES:
+        packet_num = int.from_bytes(
+            data[expected_trailer_offset:expected_trailer_offset + 4],
+            "big",
+        )
+        intan_frame_count = int.from_bytes(
+            data[expected_trailer_offset + 4:expected_trailer_offset + 8],
+            "big",
+        )
+        flags = data[
+            expected_trailer_offset + 8:
+            expected_trailer_offset + PACKET_HEADER_BYTES
+        ]
+        if intan_frame_count == INTAN_SAMPLING_RATIO:
+            score += 16
+        if flags.count(0) >= 56:
+            score += 4
+        if packet_num < 1_000_000:
+            score += 1
+
+    return score
+
+
+def choose_dma_byte_order(frame: tuple[int, ...]) -> str:
+    candidates = ("little", "swap16", "big", "reverse16")
+    scored = [
+        (packet_layout_score(frame_words_to_dma_bytes(frame, candidate)),
+         candidate)
+        for candidate in candidates
+    ]
+    scored.sort(reverse=True)
+    return scored[0][1]
 
 
 def hex_preview(data: bytes, max_bytes: int) -> str:
@@ -362,6 +429,10 @@ def main() -> int:
                         help="sensor measurements to decode per printed frame")
     parser.add_argument("--print-data-bytes", type=int, default=64,
                         help="data bytes to print per decoded measurement")
+    parser.add_argument("--dma-byte-order",
+                        choices=("auto", "little", "swap16", "big", "reverse16"),
+                        default="auto",
+                        help="byte order used to reconstruct packet bytes from DMA 32-bit words")
     args = parser.parse_args()
 
     header_size = HEADER_STRUCT.size
@@ -370,6 +441,7 @@ def main() -> int:
     previous_start_ticks: int | None = None
     records: list[SampleRecord] = []
     captured_packets: list[CapturedPacket] = []
+    selected_dma_byte_order: str | None = None
     received = 0
     csv_file, csv_writer = open_csv_writer(args.csv)
 
@@ -405,7 +477,21 @@ def main() -> int:
                 previous_perf_ns = arrival_perf_ns
 
                 frame = struct.unpack("!" + "I" * frame_words, frame_payload)
-                frame_bytes = frame_words_to_dma_bytes(frame)
+                if selected_dma_byte_order is None:
+                    selected_dma_byte_order = (
+                        choose_dma_byte_order(frame)
+                        if args.dma_byte_order == "auto"
+                        else args.dma_byte_order
+                    )
+                    if args.print_sensor_data:
+                        print(
+                            f"using DMA word byte order: "
+                            f"{selected_dma_byte_order}"
+                        )
+                frame_bytes = frame_words_to_dma_bytes(
+                    frame,
+                    selected_dma_byte_order or "little",
+                )
 
                 if frame_words == FRAME_WORDS:
                     start_ticks = (frame[1] << 32) | frame[0]
