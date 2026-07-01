@@ -114,20 +114,42 @@ proc ctrlsys_specialize_packaged_constants {temp_src file_names} {
         INTAN_SAMPLING_RATIO
         BUFFER_SIZE
         AXIS_DATA_WIDTH
+        PACKET_BYTES
     } {
         set values($name) [ctrlsys_read_int_localparam $config_path $name]
     }
 
     set axis_bytes [expr {$values(AXIS_DATA_WIDTH) / 8}]
-    set packet_header_bits 544
+    set packet_trailer_bits 2048
+    set packet_trailer_intan_offset_count 48
     set icm_measurement_bits [expr {8 + 8 * $values(ICM_DATA_BYTES)}]
     set intan_measurement_bits [expr {8 + 8 * $values(INTAN_DATA_BYTES)}]
     set icm_frame_bits [expr {128 + $values(NUM_ICM) * $icm_measurement_bits}]
     set intan_frame_bits [expr {128 + $values(NUM_INTAN) * $intan_measurement_bits}]
-    set packet_payload_bits [expr {$values(INTAN_SAMPLING_RATIO) * $intan_frame_bits + $icm_frame_bits + $packet_header_bits}]
-    set packet_payload_bytes [expr {($packet_payload_bits + 7) / 8}]
-    set values(PACKET_AXIS_WORDS) [expr {($packet_payload_bits + $values(AXIS_DATA_WIDTH) - 1) / $values(AXIS_DATA_WIDTH)}]
-    set values(PACKET_LAST_BYTES) [expr {($packet_payload_bytes % $axis_bytes) == 0 ? $axis_bytes : ($packet_payload_bytes % $axis_bytes)}]
+    set packet_trailer_bytes [expr {$packet_trailer_bits / 8}]
+    set packet_trailer_offset_bytes [expr {$values(PACKET_BYTES) - $packet_trailer_bytes}]
+    set icm_frame_bytes [expr {$icm_frame_bits / 8}]
+    set intan_frame_bytes [expr {$intan_frame_bits / 8}]
+    set max_intan_frames_by_data [expr {($packet_trailer_offset_bytes - $icm_frame_bytes) / $intan_frame_bytes}]
+    set max_intan_frames [expr {$max_intan_frames_by_data < $packet_trailer_intan_offset_count ? $max_intan_frames_by_data : $packet_trailer_intan_offset_count}]
+    set max_packet_data_bytes [expr {$max_intan_frames * $intan_frame_bytes + $icm_frame_bytes}]
+    set max_packet_valid_bytes [expr {$max_packet_data_bytes + $packet_trailer_bytes}]
+    set values(PACKET_TRAILER_BYTES) $packet_trailer_bytes
+    set values(PACKET_TRAILER_INTAN_OFFSET_COUNT) $packet_trailer_intan_offset_count
+    set values(PACKET_TRAILER_FIXED_BYTES) [expr {56 + 4 * $packet_trailer_intan_offset_count}]
+    set values(PACKET_TRAILER_RESERVED_BYTES) [expr {$packet_trailer_bytes - $values(PACKET_TRAILER_FIXED_BYTES)}]
+    set values(PACKET_TRAILER_OFFSET_BYTES) $packet_trailer_offset_bytes
+    set values(ICM_FRAME_BYTES) $icm_frame_bytes
+    set values(INTAN_FRAME_BYTES) $intan_frame_bytes
+    set values(MAX_INTAN_FRAMES_BY_DATA) $max_intan_frames_by_data
+    set values(MAX_INTAN_FRAMES_PER_PACKET) $max_intan_frames
+    set values(MAX_PACKET_DATA_BYTES) $max_packet_data_bytes
+    set values(MAX_PACKET_VALID_BYTES) $max_packet_valid_bytes
+    set values(PACKET_TRAILER_BITS) $packet_trailer_bits
+    set values(PACKET_TRAILER_BITS_EXPECTED) $packet_trailer_bits
+    set values(PACKET_PAYLOAD_BYTES) $max_packet_valid_bytes
+    set values(PACKET_AXIS_WORDS) [expr {$values(PACKET_BYTES) / $axis_bytes}]
+    set values(PACKET_LAST_BYTES) $axis_bytes
     set values(PACKET_BUFFER_WORDS) [expr {$values(PACKET_AXIS_WORDS) * $values(BUFFER_SIZE)}]
 
     set replacements {}

@@ -131,7 +131,7 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 assign core_rst = rst_sync || axil_soft_reset;
-assign spi_start = start_read_icm && !axil_use_axi && packet_writer_ready && !spi_busy;
+assign spi_start = start_read_icm && !axil_use_axi && !spi_busy;
 assign axi_spi_io0_i = axi_spi_io0_o;
 assign axi_spi_io1_i = axi_spi_miso;
 assign axi_spi_sck_i = axi_spi_sck_o;
@@ -148,7 +148,7 @@ axil_regs u_axil_regs (
     .clear_error(axil_clear_error),
     .reset_sample_counter(axil_reset_sample_counter),
     .cpu_clear_irq(axil_cpu_clear_irq),
-    .busy(spi_busy || intan_busy || !packet_writer_ready),
+    .busy(spi_busy || intan_busy),
     .error(error_latched),
     .read_in_progress(spi_busy || intan_busy),
     .packet_done(packet_done_irq),

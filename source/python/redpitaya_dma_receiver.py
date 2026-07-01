@@ -24,16 +24,47 @@ NUM_ICM = 4
 INTAN_SAMPLING_RATIO = 30
 INTAN_DATA_BYTES = 64
 ICM_DATA_BYTES = 20
-PACKET_HEADER_BYTES = 68
+PACKET_TRAILER_BYTES = 256
+PACKET_TRAILER_INTAN_OFFSET_COUNT = 48
+PACKET_BYTES = 24576
 INTAN_MEASUREMENT_BYTES = 1 + INTAN_DATA_BYTES
 ICM_MEASUREMENT_BYTES = 1 + ICM_DATA_BYTES
 INTAN_FRAME_BYTES = 16 + NUM_INTAN * INTAN_MEASUREMENT_BYTES
 ICM_FRAME_BYTES = 16 + NUM_ICM * ICM_MEASUREMENT_BYTES
-PACKET_PAYLOAD_BYTES = (
-    INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES
-    + ICM_FRAME_BYTES
-    + PACKET_HEADER_BYTES
-)
+PACKET_PAYLOAD_BYTES = PACKET_BYTES
+PACKET_MAGIC = b"\xff" * 8
+PACKET_TRAILER_OFFSET = PACKET_BYTES - PACKET_TRAILER_BYTES
+PACKET_NUM_OFFSET = 8
+PACKET_TRAILER_BYTES_OFFSET = 12
+PACKET_BYTES_OFFSET = 16
+PACKET_VALID_DATA_BYTES_OFFSET = 20
+PACKET_INTAN_COUNT_OFFSET = 24
+PACKET_MAX_INTAN_COUNT_OFFSET = 28
+PACKET_ICM_COUNT_OFFSET = 32
+PACKET_ICM_OFFSET_OFFSET = 36
+PACKET_TRAILER_START_OFFSET = 40
+PACKET_FLAGS_OFFSET = 44
+PACKET_DROPPED_INTAN_OFFSET = 48
+PACKET_DROPPED_ICM_OFFSET = 52
+PACKET_INTAN_OFFSETS_OFFSET = 56
+
+
+@dataclass(frozen=True)
+class PacketTrailer:
+    magic: bytes
+    packet_num: int
+    trailer_bytes: int
+    packet_bytes: int
+    valid_data_bytes: int
+    intan_frame_count: int
+    max_intan_frame_count: int
+    icm_frame_count: int
+    icm_offset: int
+    trailer_offset: int
+    flags: int
+    dropped_intan_frames: int
+    dropped_icm_frames: int
+    intan_offsets: tuple[int, ...]
 
 
 @dataclass
@@ -55,6 +86,74 @@ class CapturedPacket:
     core_count: int
     frame_words: int
     frame_bytes: bytes
+
+
+def trailer_slice(data: bytes, offset: int, size: int) -> bytes:
+    start = PACKET_TRAILER_OFFSET + offset
+    return data[start:start + size]
+
+
+def decode_packet_trailer(data: bytes) -> PacketTrailer:
+    intan_offsets = tuple(
+        int.from_bytes(
+            trailer_slice(data, PACKET_INTAN_OFFSETS_OFFSET + index * 4, 4),
+            "big",
+        )
+        for index in range(PACKET_TRAILER_INTAN_OFFSET_COUNT)
+    )
+
+    return PacketTrailer(
+        magic=trailer_slice(data, 0, 8),
+        packet_num=int.from_bytes(
+            trailer_slice(data, PACKET_NUM_OFFSET, 4),
+            "big",
+        ),
+        trailer_bytes=int.from_bytes(
+            trailer_slice(data, PACKET_TRAILER_BYTES_OFFSET, 4),
+            "big",
+        ),
+        packet_bytes=int.from_bytes(
+            trailer_slice(data, PACKET_BYTES_OFFSET, 4),
+            "big",
+        ),
+        valid_data_bytes=int.from_bytes(
+            trailer_slice(data, PACKET_VALID_DATA_BYTES_OFFSET, 4),
+            "big",
+        ),
+        intan_frame_count=int.from_bytes(
+            trailer_slice(data, PACKET_INTAN_COUNT_OFFSET, 4),
+            "big",
+        ),
+        max_intan_frame_count=int.from_bytes(
+            trailer_slice(data, PACKET_MAX_INTAN_COUNT_OFFSET, 4),
+            "big",
+        ),
+        icm_frame_count=int.from_bytes(
+            trailer_slice(data, PACKET_ICM_COUNT_OFFSET, 4),
+            "big",
+        ),
+        icm_offset=int.from_bytes(
+            trailer_slice(data, PACKET_ICM_OFFSET_OFFSET, 4),
+            "big",
+        ),
+        trailer_offset=int.from_bytes(
+            trailer_slice(data, PACKET_TRAILER_START_OFFSET, 4),
+            "big",
+        ),
+        flags=int.from_bytes(
+            trailer_slice(data, PACKET_FLAGS_OFFSET, 4),
+            "big",
+        ),
+        dropped_intan_frames=int.from_bytes(
+            trailer_slice(data, PACKET_DROPPED_INTAN_OFFSET, 4),
+            "big",
+        ),
+        dropped_icm_frames=int.from_bytes(
+            trailer_slice(data, PACKET_DROPPED_ICM_OFFSET, 4),
+            "big",
+        ),
+        intan_offsets=intan_offsets,
+    )
 
 
 def recv_exact(sock: socket.socket, length: int) -> bytes:
@@ -127,40 +226,44 @@ def frame_words_to_dma_bytes(frame: tuple[int, ...],
 
 def packet_layout_score(data: bytes) -> int:
     score = 0
-    expected_trailer_offset = (
-        INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES + ICM_FRAME_BYTES
-    )
 
-    if len(data) >= INTAN_FRAME_BYTES:
+    if len(data) >= PACKET_BYTES:
+        trailer = decode_packet_trailer(data)
+        if trailer.magic == PACKET_MAGIC:
+            score += 32
+        if 0 <= trailer.intan_frame_count <= trailer.max_intan_frame_count:
+            score += 16
+        if trailer.trailer_bytes == PACKET_TRAILER_BYTES:
+            score += 4
+        if trailer.packet_bytes == PACKET_BYTES:
+            score += 4
+        if trailer.valid_data_bytes <= trailer.trailer_offset:
+            score += 4
+        if trailer.trailer_offset == PACKET_TRAILER_OFFSET:
+            score += 4
+        if trailer.packet_num < 1_000_000:
+            score += 1
+
+    intan_offset = 0
+    if len(data) >= PACKET_BYTES:
+        trailer = decode_packet_trailer(data)
+        if trailer.intan_offsets:
+            intan_offset = trailer.intan_offsets[0]
+
+    if len(data) >= intan_offset + INTAN_FRAME_BYTES:
         expected_ids = list(range(NUM_INTAN - 1, -1, -1))
         intan_ids = [
-            data[16 + index * INTAN_MEASUREMENT_BYTES]
+            data[
+                intan_offset
+                + 16
+                + index * INTAN_MEASUREMENT_BYTES
+            ]
             for index in range(NUM_INTAN)
         ]
         score += sum(
             1 for observed, expected in zip(intan_ids, expected_ids)
             if observed == expected
         )
-
-    if len(data) >= expected_trailer_offset + PACKET_HEADER_BYTES:
-        packet_num = int.from_bytes(
-            data[expected_trailer_offset:expected_trailer_offset + 4],
-            "big",
-        )
-        intan_frame_count = int.from_bytes(
-            data[expected_trailer_offset + 4:expected_trailer_offset + 8],
-            "big",
-        )
-        flags = data[
-            expected_trailer_offset + 8:
-            expected_trailer_offset + PACKET_HEADER_BYTES
-        ]
-        if intan_frame_count == INTAN_SAMPLING_RATIO:
-            score += 16
-        if flags.count(0) >= 56:
-            score += 4
-        if packet_num < 1_000_000:
-            score += 1
 
     return score
 
@@ -189,8 +292,8 @@ def read_u64_be(data: bytes, offset: int) -> int:
 
 
 def print_intan_frame(data: bytes, frame_index: int, max_sensors: int,
-                      max_data_bytes: int) -> None:
-    offset = frame_index * INTAN_FRAME_BYTES
+                      max_data_bytes: int, intan_offset: int) -> None:
+    offset = intan_offset + frame_index * INTAN_FRAME_BYTES
     init_ts = read_u64_be(data, offset)
     done_ts = read_u64_be(data, offset + 8)
 
@@ -208,8 +311,9 @@ def print_intan_frame(data: bytes, frame_index: int, max_sensors: int,
         )
 
 
-def print_icm_frame(data: bytes, max_sensors: int, max_data_bytes: int) -> None:
-    offset = INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES
+def print_icm_frame(data: bytes, max_sensors: int, max_data_bytes: int,
+                    icm_offset: int) -> None:
+    offset = icm_offset
     init_ts = read_u64_be(data, offset)
     done_ts = read_u64_be(data, offset + 8)
 
@@ -227,75 +331,99 @@ def print_icm_frame(data: bytes, max_sensors: int, max_data_bytes: int) -> None:
 
 def print_packet_trailer(data: bytes, frame_words: int) -> None:
     if len(data) < PACKET_PAYLOAD_BYTES:
-        print("  Packet is too short to contain the expected trailer/header")
+        print("  Packet is too short to contain the expected trailer")
         return
 
-    offset = INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES + ICM_FRAME_BYTES
-    packet_num = int.from_bytes(data[offset:offset + 4], "big")
-    intan_frame_count = int.from_bytes(data[offset + 4:offset + 8], "big")
-    flags = data[offset + 8:offset + PACKET_HEADER_BYTES]
-    padding = len(data) - PACKET_PAYLOAD_BYTES
+    trailer = decode_packet_trailer(data)
+    padding = max(0, trailer.trailer_offset - trailer.valid_data_bytes)
+    offsets_preview = ", ".join(
+        str(offset)
+        for offset in trailer.intan_offsets[:trailer.intan_frame_count]
+    )
 
     print(
-        f"  Trailer/header: packet_num={packet_num} "
-        f"intan_frame_count={intan_frame_count} "
-        f"flags={hex_preview(flags, 16)} padding_bytes={padding} "
-        f"frame_words={frame_words}"
+        f"  Trailer: magic={trailer.magic.hex(' ')} "
+        f"packet_num={trailer.packet_num} "
+        f"trailer_bytes={trailer.trailer_bytes} "
+        f"packet_bytes={trailer.packet_bytes} "
+        f"valid_data_bytes={trailer.valid_data_bytes} "
+        f"intan_frame_count={trailer.intan_frame_count} "
+        f"max_intan_frame_count={trailer.max_intan_frame_count} "
+        f"icm_frame_count={trailer.icm_frame_count} "
+        f"icm_offset={trailer.icm_offset} "
+        f"trailer_offset={trailer.trailer_offset} "
+        f"intan_offsets=[{offsets_preview}] "
+        f"flags=0x{trailer.flags:08x} "
+        f"dropped_intan={trailer.dropped_intan_frames} "
+        f"dropped_icm={trailer.dropped_icm_frames} "
+        f"padding_bytes={padding} frame_words={frame_words}"
     )
 
 
 def find_plausible_trailer_offsets(data: bytes) -> list[int]:
     offsets: list[int] = []
-    search_start = max(0, PACKET_PAYLOAD_BYTES - 2048)
-    search_end = min(len(data) - PACKET_HEADER_BYTES + 1,
-                     PACKET_PAYLOAD_BYTES + 2048)
+    search_start = max(0, PACKET_TRAILER_OFFSET - 2048)
+    search_end = min(len(data) - PACKET_TRAILER_BYTES + 1,
+                     PACKET_TRAILER_OFFSET + 2048)
 
     for offset in range(search_start, search_end):
-        intan_frame_count = int.from_bytes(data[offset + 4:offset + 8], "big")
-        flags = data[offset + 8:offset + PACKET_HEADER_BYTES]
-        if intan_frame_count == INTAN_SAMPLING_RATIO and flags.count(0) >= 56:
+        intan_frame_count = int.from_bytes(
+            data[offset + PACKET_INTAN_COUNT_OFFSET:offset + PACKET_INTAN_COUNT_OFFSET + 4],
+            "big",
+        )
+        if (
+            data[offset:offset + 8] == PACKET_MAGIC
+            and intan_frame_count <= INTAN_SAMPLING_RATIO
+        ):
             offsets.append(offset)
 
     return offsets
 
 
-def print_packet_sanity(data: bytes) -> None:
-    expected_trailer_offset = (
-        INTAN_SAMPLING_RATIO * INTAN_FRAME_BYTES + ICM_FRAME_BYTES
-    )
+def print_packet_sanity(data: bytes, trailer: PacketTrailer) -> None:
     expected_ids = list(range(NUM_INTAN - 1, -1, -1))
+    first_intan_offset = trailer.intan_offsets[0] if trailer.intan_offsets else 0
     intan_ids = [
-        data[16 + index * INTAN_MEASUREMENT_BYTES]
+        data[
+            first_intan_offset
+            + 16
+            + index * INTAN_MEASUREMENT_BYTES
+        ]
         for index in range(NUM_INTAN)
-    ] if len(data) >= INTAN_FRAME_BYTES else []
+    ] if (
+        trailer.intan_frame_count > 0
+        and len(data) >= first_intan_offset + INTAN_FRAME_BYTES
+    ) else []
 
     print(
         f"  Sanity: expected Intan IDs at frame 0 physical offsets "
         f"{expected_ids}, observed {intan_ids}"
     )
 
-    if len(data) >= expected_trailer_offset + 8:
-        intan_frame_count = int.from_bytes(
-            data[expected_trailer_offset + 4:expected_trailer_offset + 8],
-            "big",
-        )
-        if intan_frame_count != INTAN_SAMPLING_RATIO:
+    if len(data) >= PACKET_BYTES:
+        if (
+            trailer.magic != PACKET_MAGIC
+            or trailer.trailer_bytes != PACKET_TRAILER_BYTES
+            or trailer.packet_bytes != PACKET_BYTES
+            or trailer.valid_data_bytes > trailer.trailer_offset
+            or trailer.trailer_offset != PACKET_TRAILER_OFFSET
+            or trailer.intan_frame_count > trailer.max_intan_frame_count
+        ):
             candidates = find_plausible_trailer_offsets(data)
             if candidates:
-                shifts = [
-                    candidate - expected_trailer_offset
-                    for candidate in candidates[:8]
-                ]
                 print(
-                    f"  Sanity: expected trailer offset "
-                    f"{expected_trailer_offset}, but intan_frame_count="
-                    f"{intan_frame_count}; plausible trailer shifts={shifts}"
+                    f"  Sanity: expected trailer at offset "
+                    f"{PACKET_TRAILER_OFFSET}, but magic="
+                    f"{trailer.magic.hex(' ')} intan_frame_count="
+                    f"{trailer.intan_frame_count}; plausible trailer offsets="
+                    f"{candidates[:8]}"
                 )
             else:
                 print(
-                    f"  Sanity: expected trailer offset "
-                    f"{expected_trailer_offset}, but intan_frame_count="
-                    f"{intan_frame_count}; no nearby plausible trailer found"
+                    f"  Sanity: expected trailer at offset "
+                    f"{PACKET_TRAILER_OFFSET}, but magic="
+                    f"{trailer.magic.hex(' ')} intan_frame_count="
+                    f"{trailer.intan_frame_count}; no nearby plausible trailer found"
                 )
 
 
@@ -320,16 +448,28 @@ def print_captured_sensor_data(packets: list[CapturedPacket],
             )
             continue
 
-        for frame_index in range(min(INTAN_SAMPLING_RATIO, max_intan_frames)):
+        trailer = decode_packet_trailer(packet.frame_bytes)
+        print_packet_trailer(packet.frame_bytes, packet.frame_words)
+        for frame_index in range(min(trailer.intan_frame_count, max_intan_frames)):
+            intan_offset = (
+                trailer.intan_offsets[frame_index]
+                if frame_index < len(trailer.intan_offsets)
+                else frame_index * INTAN_FRAME_BYTES
+            )
             print_intan_frame(
                 packet.frame_bytes,
                 frame_index,
                 max_sensors,
                 max_data_bytes,
+                intan_offset,
             )
-        print_icm_frame(packet.frame_bytes, max_sensors, max_data_bytes)
-        print_packet_trailer(packet.frame_bytes, packet.frame_words)
-        print_packet_sanity(packet.frame_bytes)
+        print_icm_frame(
+            packet.frame_bytes,
+            max_sensors,
+            max_data_bytes,
+            trailer.icm_offset,
+        )
+        print_packet_sanity(packet.frame_bytes, trailer)
 
 
 def print_captured_raw_bytes(packets: list[CapturedPacket],

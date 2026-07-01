@@ -4,10 +4,7 @@ Generate a standalone HTML/SVG visualization of packet byte layout versus AXI
 Stream word boundaries.
 
 By default this reads source/hdl/config_pkg.sv, computes the current frame sizes,
-and draws a tightly packed packet. Use --layout intan-first to visualize Intan
-frames starting at packet byte 0, or --layout current-rtl to visualize the
-existing packet_builder behavior that pads header+ICM and every Intan frame to
-1024-bit word boundaries.
+and draws the fixed packet as Intan frames, ICM frame, zero padding, then trailer.
 """
 
 from __future__ import annotations
@@ -68,13 +65,13 @@ def parse_args() -> argparse.Namespace:
         "--layout",
         choices=("tight", "intan-first", "current-rtl"),
         default="tight",
-        help="Layout to visualize. tight packs header+ICM+Intan contiguously; intan-first packs Intan+ICM+header contiguously; current-rtl matches the current packet_builder padding.",
+        help="Layout to visualize. tight packs Intan+ICM+trailer; intan-first shows the older Intan+ICM+header order; current-rtl matches the older padded packet_builder behavior.",
     )
     parser.add_argument(
-        "--header-bytes",
+        "--trailer-bytes",
         type=int,
         default=None,
-        help="Override packet header size in bytes.",
+        help="Override packet trailer size in bytes.",
     )
     parser.add_argument(
         "--icm-frame-overhead-bytes",
@@ -224,11 +221,10 @@ def build_layout(
             add(name, padded - offset, "padding")
 
     if layout == "tight":
-        add("Packet header", header_bytes, "header")
-        add("ICM frame", icm_frame_bytes, "icm")
         for index in range(intan_count):
             add(f"Intan frame {index}", intan_frame_bytes, "intan")
-        add_padding("Final packet padding", axis_bytes)
+        add("ICM frame", icm_frame_bytes, "icm")
+        add("Packet trailer", header_bytes, "header")
     elif layout == "intan-first":
         for index in range(intan_count):
             add(f"Intan frame {index}", intan_frame_bytes, "intan")
@@ -602,15 +598,13 @@ def main() -> None:
     if constants["AXIS_DATA_WIDTH"] % 8 != 0:
         raise SystemExit("AXIS_DATA_WIDTH must be byte-aligned")
 
-    header_bits = scalar_logic_bits(get_struct_body(text, "packet_header_t"), constants)
+    trailer_bytes = args.trailer_bytes
+    if trailer_bytes is None:
+        trailer_bytes = constants.get("PACKET_TRAILER_BYTES", 256)
     icm_measurement_bits = scalar_logic_bits(get_struct_body(text, "ICM_measurement_t"), constants)
     intan_measurement_bits = scalar_logic_bits(get_struct_body(text, "Intan_measurement_t"), constants)
     icm_frame_overhead_bits = scalar_logic_bits(get_struct_body(text, "ICM_frame_t"), constants)
     intan_frame_overhead_bits = scalar_logic_bits(get_struct_body(text, "Intan_frame_t"), constants)
-
-    header_bytes = args.header_bytes
-    if header_bytes is None:
-        header_bytes = require_byte_aligned("packet_header_t", header_bits)
 
     icm_measurement_bytes = require_byte_aligned("ICM_measurement_t", icm_measurement_bits)
     intan_measurement_bytes = require_byte_aligned(
@@ -639,12 +633,47 @@ def main() -> None:
 
     items, total_bytes = build_layout(
         layout=args.layout,
-        header_bytes=header_bytes,
+        header_bytes=trailer_bytes,
         icm_frame_bytes=icm_frame_bytes,
         intan_frame_bytes=intan_frame_bytes,
         intan_count=constants["INTAN_SAMPLING_RATIO"],
         axis_bytes=axis_bytes,
     )
+    fixed_packet_bytes = constants.get("PACKET_BYTES", total_bytes)
+    if fixed_packet_bytes < total_bytes:
+        raise SystemExit(
+            f"PACKET_BYTES={fixed_packet_bytes} is smaller than layout size "
+            f"{total_bytes}"
+        )
+    if args.layout == "tight" and items and items[-1].kind == "header":
+        trailer_item = items.pop()
+        total_bytes -= trailer_item.size
+        trailer_offset = fixed_packet_bytes - trailer_item.size
+        if trailer_offset > total_bytes:
+            items.append(LayoutItem(
+                name="Fixed packet padding",
+                start=total_bytes,
+                size=trailer_offset - total_bytes,
+                kind="padding",
+                detail="Zero padding before trailer",
+            ))
+        items.append(LayoutItem(
+            name=trailer_item.name,
+            start=trailer_offset,
+            size=trailer_item.size,
+            kind=trailer_item.kind,
+            detail=trailer_item.detail,
+        ))
+        total_bytes = fixed_packet_bytes
+    elif fixed_packet_bytes > total_bytes:
+        items.append(LayoutItem(
+            name="Fixed packet padding",
+            start=total_bytes,
+            size=fixed_packet_bytes - total_bytes,
+            kind="padding",
+            detail="Zero padding up to PACKET_BYTES",
+        ))
+        total_bytes = fixed_packet_bytes
 
     output_path = args.output.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -653,7 +682,7 @@ def main() -> None:
             constants=constants,
             config_path=config_path,
             layout_name=args.layout,
-            header_bytes=header_bytes,
+            header_bytes=trailer_bytes,
             icm_measurement_bytes=icm_measurement_bytes,
             intan_measurement_bytes=intan_measurement_bytes,
             icm_frame_overhead_bytes=icm_frame_overhead_bytes,
