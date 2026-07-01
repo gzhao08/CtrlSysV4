@@ -10,8 +10,8 @@ import config_pkg::*;
 
 module packet_to_axis #(
     parameter int DATA_WIDTH = 1024,
-    parameter int PACKET_WORDS = 127,
-    parameter int PACKET_LAST_BYTES = 120
+    parameter int PACKET_WORDS = 192,
+    parameter int PACKET_LAST_BYTES = 128
 )(
     input  logic                    clk,
     input  logic                    rst,
@@ -32,7 +32,8 @@ localparam int WORD_INDEX_WIDTH = (PACKET_WORDS > 1) ? $clog2(PACKET_WORDS) : 1;
 
 typedef enum logic [1:0] {
     IDLE,
-    WAIT_FOR_WORD,
+    WAIT_FOR_READ,
+    CAPTURE_WORD,
     SEND_WORD
 } state_t;
 
@@ -84,11 +85,15 @@ always_ff @(posedge clk) begin
 
                 if (!fifo_empty) begin
                     fifo_rd_en <= 1'b1;
-                    state <= WAIT_FOR_WORD;
+                    state <= WAIT_FOR_READ;
                 end
             end
 
-            WAIT_FOR_WORD: begin
+            WAIT_FOR_READ: begin
+                state <= CAPTURE_WORD;
+            end
+
+            CAPTURE_WORD: begin
                 m_axis_tdata <= fifo_rd_data;
                 m_axis_tkeep <= keep_for_word(word_index);
                 m_axis_tlast <= word_index == PACKET_WORDS - 1;
@@ -107,7 +112,7 @@ always_ff @(posedge clk) begin
 
                     if (!fifo_empty) begin
                         fifo_rd_en <= 1'b1;
-                        state <= WAIT_FOR_WORD;
+                        state <= WAIT_FOR_READ;
                     end else begin
                         state <= IDLE;
                     end

@@ -446,7 +446,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>5ef726b7</spirit:value>
+            <spirit:value>d09e73ff</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -462,7 +462,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>5ef726b7</spirit:value>
+            <spirit:value>d09e73ff</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -1208,7 +1208,7 @@
       <spirit:file>
         <spirit:name>src/ctrlsys_core.sv</spirit:name>
         <spirit:fileType>systemVerilogSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_0bb121ff</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_7bf2939d</spirit:userFileType>
         <spirit:userFileType>IMPORTED_FILE</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
@@ -1312,13 +1312,13 @@
       <xilinx:displayName>CtrlSysV4 Control System Core</xilinx:displayName>
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-06-30T18:36:46Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-07-01T00:04:11Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="d895b2b1"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="e158a12f"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="a75cce7f"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="69dae5ca"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="20b0a130"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="a416c507"/>
     </xilinx:packagingInfo>

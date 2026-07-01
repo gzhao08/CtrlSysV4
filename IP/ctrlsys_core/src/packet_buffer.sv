@@ -10,8 +10,8 @@ import config_pkg::*;
 
 module packet_buffer #(
     parameter int DATA_WIDTH = 1024,
-    parameter int DEPTH_WORDS = 1905,
-    parameter int PACKET_WORDS = 127
+    parameter int DEPTH_WORDS = 1920,
+    parameter int PACKET_WORDS = 192
 )(
     input  logic                    clk,
     input  logic                    rst,

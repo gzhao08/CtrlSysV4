@@ -56,8 +56,8 @@ module ctrlsys_core (
 localparam logic [6:0] SPI_REG_ADDR = 7'd45;
 
 initial begin
-    if (15 < 1)
-        $error("ctrlsys_core requires 15 >= 1");
+    if (10 < 1)
+        $error("ctrlsys_core requires 10 >= 1");
     if (1024 < 8 || (1024 % 8) != 0)
         $error("ctrlsys_core 1024 must be a positive byte multiple");
 end
@@ -131,7 +131,7 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 assign core_rst = rst_sync || axil_soft_reset;
-assign spi_start = start_read_icm && !axil_use_axi && packet_writer_ready && !spi_busy;
+assign spi_start = start_read_icm && !axil_use_axi && !spi_busy;
 assign axi_spi_io0_i = axi_spi_io0_o;
 assign axi_spi_io1_i = axi_spi_miso;
 assign axi_spi_sck_i = axi_spi_sck_o;
@@ -148,7 +148,7 @@ axil_regs u_axil_regs (
     .clear_error(axil_clear_error),
     .reset_sample_counter(axil_reset_sample_counter),
     .cpu_clear_irq(axil_cpu_clear_irq),
-    .busy(spi_busy || intan_busy || !packet_writer_ready),
+    .busy(spi_busy || intan_busy),
     .error(error_latched),
     .read_in_progress(spi_busy || intan_busy),
     .packet_done(packet_done_irq),
@@ -299,21 +299,21 @@ always_ff @(posedge clk) begin
 
         if (packet_writer_packet_done) begin
             data_word0 <= sample_count;
-            data_word1 <= 127;
-            data_word2 <= 1905;
+            data_word1 <= 192;
+            data_word2 <= 1920;
             data_word3 <= icm_frame.init_read_ts[31:0];
             data_word4 <= icm_frame.init_read_ts[63:32];
             data_word5 <= icm_frame.done_read_ts[31:0];
             data_word6 <= icm_frame.done_read_ts[63:32];
-            data_word7 <= PACKET_BYTES;
+            data_word7 <= 24576;
         end
     end
 end
 
 packet_buffer #(
     .DATA_WIDTH(1024),
-    .DEPTH_WORDS(1905),
-    .PACKET_WORDS(127)
+    .DEPTH_WORDS(1920),
+    .PACKET_WORDS(192)
 ) u_packet_buffer (
     .clk(clk),
     .rst(core_rst),
